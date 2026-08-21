@@ -28,6 +28,12 @@ interface TableGroupDTO {
   orders: OrderDTO[];
 }
 
+interface MenuCategoryDTO {
+  id: string;
+  name: string;
+  menuItems: { id: string; name: string; price: number }[];
+}
+
 type BoardData = { mode: "table"; tables: TableGroupDTO[] } | { mode: "number"; orders: OrderDTO[] };
 
 const STATUS_STEPS: { value: string; tableLabel: string; numberLabel: string }[] = [
@@ -36,7 +42,13 @@ const STATUS_STEPS: { value: string; tableLabel: string; numberLabel: string }[]
   { value: "served", tableLabel: "提供済み", numberLabel: "受渡済み" },
 ];
 
-export function OrdersBoard({ initialData }: { initialData: BoardData }) {
+export function OrdersBoard({
+  initialData,
+  menuCategories = [],
+}: {
+  initialData: BoardData;
+  menuCategories?: MenuCategoryDTO[];
+}) {
   const [data, setData] = useState<BoardData>(initialData);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [checkoutTarget, setCheckoutTarget] = useState<TableGroupDTO | null>(null);
@@ -158,7 +170,7 @@ export function OrdersBoard({ initialData }: { initialData: BoardData }) {
         </div>
 
         {view === "floor" ? (
-          <FloorView onChanged={refresh} />
+          <FloorView onChanged={refresh} menuCategories={menuCategories} />
         ) : (
           <ActiveOrdersView
             data={data}

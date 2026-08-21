@@ -118,6 +118,7 @@ export async function createMenuItem(input: {
   description?: string;
   isRecommended?: boolean;
   allergens?: string;
+  imageUrl?: string;
 }) {
   const max = await prisma.menuItem.aggregate({
     where: { categoryId: input.categoryId },
@@ -140,6 +141,7 @@ export async function updateMenuItem(
     allergens: string | null;
     pendingPrice: number | null;
     applyAt: Date | null;
+    imageUrl: string | null;
   }>
 ) {
   return prisma.menuItem.update({ where: { id }, data });
@@ -300,6 +302,39 @@ export async function createOrder(input: {
     note: input.note,
     idempotencyKey: input.idempotencyKey,
     items: { create: itemsCreateData },
+  });
+}
+
+// スタッフ側で、口頭・電話などQRを経由しない注文を卓に代理入力する。
+// createOrderの卓方式と同じくその卓の進行中セッションに紐づけるだけなので、
+// 客側の注文画面（同じセッションの注文を全件表示する）にもそのまま表示される。
+export async function createStaffOrder(tableNumber: number, items: { menuItemId: string; quantity: number }[]) {
+  if (items.length === 0) throw new Error("注文する商品がありません");
+
+  const menuItems = await prisma.menuItem.findMany({
+    where: { id: { in: items.map((i) => i.menuItemId) }, isAvailable: true },
+  });
+  const menuItemById = new Map(menuItems.map((m) => [m.id, m]));
+  const itemsCreateData = items.map(({ menuItemId, quantity }) => {
+    const menuItem = menuItemById.get(menuItemId);
+    if (!menuItem) throw new Error("商品が見つかりません");
+    if (quantity < 1) throw new Error("数量が不正です");
+    return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
+  });
+
+  const table = await getTableByNumber(tableNumber);
+  if (!table) throw new Error("卓が見つかりません");
+  const session = await getOrCreateActiveSession(table.id);
+
+  return prisma.order.create({
+    data: {
+      mode: "table",
+      tableId: table.id,
+      sessionId: session.id,
+      note: "スタッフ入力（口頭注文）",
+      items: { create: itemsCreateData },
+    },
+    include: { items: true },
   });
 }
 
@@ -612,6 +647,52 @@ export async function createStaffAccount(email: string, name: string, password: 
   return prisma.staffUser.create({
     data: { email: email.trim().toLowerCase(), name, passwordHash },
   });
+}
+
+// ---- 招待コード -----------------------------------------------------------
+// URLさえ知っていれば誰でも新規登録できてしまう問題への対策。既存スタッフが
+// 発行したコードを新規登録時に消費させ、1回使われたら失効させる。
+
+function generateInviteCode(): string {
+  // 見間違えやすい文字（0/O、1/I/l 等）を避けた8文字コード
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let code = "";
+  for (let i = 0; i < 8; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return code;
+}
+
+export async function createStaffInvite(note?: string, expiresInDays?: number) {
+  const code = generateInviteCode();
+  const expiresAt = expiresInDays ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000) : null;
+  return prisma.staffInvite.create({ data: { code, note: note || null, expiresAt } });
+}
+
+export async function listStaffInvites() {
+  return prisma.staffInvite.findMany({ orderBy: { createdAt: "desc" } });
+}
+
+export async function deleteStaffInvite(id: string) {
+  return prisma.staffInvite.delete({ where: { id } });
+}
+
+// コードを検証し、有効なら即座に使用済みにする（同じコードの二重使用を防ぐため、
+// 検証と消費を1つの操作にまとめる）。
+export async function consumeStaffInvite(code: string, usedByEmail: string) {
+  const normalized = code.trim().toUpperCase();
+  const invite = await prisma.staffInvite.findUnique({ where: { code: normalized } });
+  if (!invite) throw new Error("招待コードが正しくありません");
+  if (invite.usedAt) throw new Error("この招待コードは既に使用されています");
+  if (invite.expiresAt && invite.expiresAt.getTime() < Date.now()) throw new Error("この招待コードは有効期限が切れています");
+
+  try {
+    await prisma.staffInvite.update({
+      where: { id: invite.id, usedAt: null },
+      data: { usedAt: new Date(), usedByEmail },
+    });
+  } catch {
+    // 他のリクエストがほぼ同時にこのコードを消費した場合の競合
+    throw new Error("この招待コードは既に使用されています");
+  }
 }
 
 export async function deleteStaffAccount(id: string) {

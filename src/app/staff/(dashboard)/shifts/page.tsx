@@ -38,12 +38,117 @@ function monthParam(year: number, month: number, delta: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
+// 指定日を含む週の月曜日を返す
+function weekStartFor(dateKey: string): Date {
+  const d = new Date(`${dateKey}T00:00:00.000Z`);
+  const mondayOffset = (d.getUTCDay() + 6) % 7;
+  return new Date(d.getTime() - mondayOffset * 86400000);
+}
+
 const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
 export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">) {
   const { view: viewParam, month: monthQuery, date: dateQuery } = await props.searchParams;
-  const view = viewParam === "day" ? "day" : "month";
+  const view = viewParam === "day" ? "day" : viewParam === "week" ? "week" : "month";
   const members = await listShiftMembers();
+
+  if (view === "week") {
+    const anchorDate = typeof dateQuery === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery) ? dateQuery : todayKeyJST();
+    const weekStart = weekStartFor(anchorDate);
+    const weekDays = Array.from({ length: 7 }, (_, i) => new Date(weekStart.getTime() + i * 86400000));
+    const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
+    const shifts = await getShiftsForRange(weekStart, weekEnd);
+
+    const shiftsByMemberAndDate = new Map<string, { id: string; date: string; startTime: string; endTime: string }[]>();
+    for (const shift of shifts) {
+      const key = shift.memberId;
+      const list = shiftsByMemberAndDate.get(key) ?? [];
+      list.push({ id: shift.id, date: toDateKey(shift.date), startTime: shift.startTime, endTime: shift.endTime });
+      shiftsByMemberAndDate.set(key, list);
+    }
+
+    const prevWeekDate = toDateKey(new Date(weekStart.getTime() - 86400000));
+    const nextWeekDate = toDateKey(new Date(weekStart.getTime() + 7 * 86400000));
+    const monthOfWeek = toDateKey(weekStart).slice(0, 7);
+    const weekLabel = `${weekDays[0].getUTCMonth() + 1}/${weekDays[0].getUTCDate()} 〜 ${weekDays[6].getUTCMonth() + 1}/${weekDays[6].getUTCDate()}`;
+
+    return (
+      <div>
+        <ShiftHeader monthOfDate={weekLabel} />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
+          <div className="flex items-center gap-2 text-sm">
+            <Link href={`/staff/shifts?view=week&date=${prevWeekDate}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+              ‹
+            </Link>
+            <span className="min-w-32 text-center font-medium text-foreground">{weekLabel}</span>
+            <Link href={`/staff/shifts?view=week&date=${nextWeekDate}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+              ›
+            </Link>
+            <Link href={`/staff/shifts?view=week&date=${todayKeyJST()}`} className="ml-1 rounded-full border border-border px-3 py-1.5 text-foreground">
+              今週
+            </Link>
+          </div>
+          <div className="flex items-center gap-2">
+            <ExportLinks href="/api/staff/export/shifts" params={{ month: monthOfWeek }} />
+            <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+            <Link href={`/staff/shifts?view=month&month=${monthOfWeek}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
+              月表示
+            </Link>
+          </div>
+        </div>
+
+        {members.length === 0 && (
+          <p className="mb-4 rounded-lg border border-dashed border-border bg-surface p-3 text-sm text-muted print:hidden">
+            シフトメンバーが登録されていません。設定＞シフトメンバーから追加してください。
+          </p>
+        )}
+
+        <div className="overflow-x-auto rounded-2xl border border-border bg-surface">
+          <div className="grid grid-cols-8" style={{ minWidth: 640 }}>
+            <div className="border-b border-r border-border p-2 text-xs text-muted">メンバー</div>
+            {weekDays.map((d) => {
+              const key = toDateKey(d);
+              const isToday = key === todayKeyJST();
+              return (
+                <Link
+                  key={key}
+                  href={`/staff/shifts?view=day&date=${key}`}
+                  className={`border-b border-r border-border p-2 text-center text-xs last:border-r-0 ${
+                    isToday ? "bg-background font-bold text-foreground" : "text-muted"
+                  }`}
+                >
+                  {WEEKDAY_LABELS[(d.getUTCDay() + 6) % 7]} {d.getUTCMonth() + 1}/{d.getUTCDate()}
+                </Link>
+              );
+            })}
+
+            {members.map((member) => (
+              <div key={member.id} className="contents">
+                <div className="border-r border-b border-border p-2 text-xs font-medium text-foreground">{member.name}</div>
+                {weekDays.map((d) => {
+                  const key = toDateKey(d);
+                  const dayShifts = (shiftsByMemberAndDate.get(member.id) ?? []).filter((s) => s.date === key);
+                  return (
+                    <Link
+                      key={key}
+                      href={`/staff/shifts?view=day&date=${key}`}
+                      className="space-y-1 border-r border-b border-border p-1.5 text-center last:border-r-0"
+                    >
+                      {dayShifts.map((s) => (
+                        <p key={s.id} className="rounded-full bg-accent px-1.5 py-0.5 text-[10px] text-accent-foreground">
+                          {s.startTime}-{s.endTime}
+                        </p>
+                      ))}
+                    </Link>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (view === "day") {
     const date = typeof dateQuery === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery) ? dateQuery : todayKeyJST();
@@ -77,6 +182,9 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
           <div className="flex items-center gap-2">
             <ExportLinks href="/api/staff/export/shifts" params={{ month: monthOfDate }} />
             <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+            <Link href={`/staff/shifts?view=week&date=${date}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
+              週表示
+            </Link>
             <Link href={`/staff/shifts?view=month&month=${monthOfDate}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
               月表示に戻る
             </Link>
@@ -159,6 +267,9 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
         <div className="flex items-center gap-2">
           <ExportLinks href="/api/staff/export/shifts" params={{ month: `${year}-${String(month + 1).padStart(2, "0")}` }} />
           <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+          <Link href={`/staff/shifts?view=week&date=${todayKeyJST()}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
+            週表示
+          </Link>
         </div>
       </div>
 

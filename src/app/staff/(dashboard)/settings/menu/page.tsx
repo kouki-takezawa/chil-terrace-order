@@ -56,7 +56,16 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
       <div className="print:hidden">
       <div className="space-y-6">
         {categories.map((category) => (
-          <div key={category.id} className="rounded-2xl border border-border bg-surface p-5">
+          <details key={category.id} className="group rounded-2xl border border-border bg-surface">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 [&::-webkit-details-marker]:hidden">
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold text-foreground">{category.name}</span>
+                <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted">{category.menuItems.length}品</span>
+              </div>
+              <span className="text-muted transition-transform group-open:rotate-180">▾</span>
+            </summary>
+
+            <div className="border-t border-border p-5">
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <form action={renameCategoryAction} className="flex items-center gap-2">
                 <input type="hidden" name="id" value={category.id} />
@@ -155,6 +164,19 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                     />
                     <span className="text-[11px] text-muted">から適用（両方入力で有効）</span>
                   </div>
+                  <div className="col-span-full flex items-center gap-2 border-t border-border pt-2">
+                    {item.imageUrl && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={item.imageUrl} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover" />
+                    )}
+                    <input
+                      type="text"
+                      name="imageUrl"
+                      defaultValue={item.imageUrl ?? ""}
+                      placeholder="商品写真のURL（任意）"
+                      className="flex-1 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    />
+                  </div>
                 </form>
               ))}
               {category.menuItems.length === 0 && <p className="text-xs text-muted">商品がありません</p>}
@@ -198,8 +220,15 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                   </label>
                 ))}
               </div>
+              <input
+                type="text"
+                name="imageUrl"
+                placeholder="商品写真のURL（任意）"
+                className="col-span-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground"
+              />
             </form>
-          </div>
+            </div>
+          </details>
         ))}
       </div>
 

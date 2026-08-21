@@ -20,18 +20,31 @@ interface SessionHistoryEntry {
   total: number;
 }
 
+interface MenuCategoryDTO {
+  id: string;
+  name: string;
+  menuItems: { id: string; name: string; price: number }[];
+}
+
 const STATUS_LABEL: Record<FloorEntry["status"], string> = {
   empty: "空席",
   active: "進行中",
   just_closed: "会計済み",
 };
 
-export function FloorView({ onChanged }: { onChanged: () => void }) {
+export function FloorView({
+  onChanged,
+  menuCategories = [],
+}: {
+  onChanged: () => void;
+  menuCategories?: MenuCategoryDTO[];
+}) {
   const [floor, setFloor] = useState<FloorEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [history, setHistory] = useState<Record<string, SessionHistoryEntry[]>>({});
+  const [orderModalTable, setOrderModalTable] = useState<{ number: number; label: string } | null>(null);
 
   async function refresh() {
     try {
@@ -98,6 +111,19 @@ export function FloorView({ onChanged }: { onChanged: () => void }) {
     }
   }
 
+  async function submitStaffOrder(tableNumber: number, items: { menuItemId: string; quantity: number }[]) {
+    const res = await fetch(`/api/staff/tables/${tableNumber}/orders`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    });
+    if (res.ok) {
+      await refresh();
+      onChanged();
+    }
+    return res;
+  }
+
   async function toggleHistory(tableId: string, tableNumber: number) {
     if (expanded === tableId) {
       setExpanded(null);
@@ -142,8 +168,138 @@ export function FloorView({ onChanged }: { onChanged: () => void }) {
           onUndoCheckout={() => undoCheckout(entry.table.number)}
           onResolveHelp={() => resolveHelp(entry.table.number)}
           onSaveNote={(note) => saveNote(entry.table.number, note)}
+          onOpenOrderModal={() =>
+            setOrderModalTable({ number: entry.table.number, label: entry.table.name ?? `卓${entry.table.number}` })
+          }
+          canOrder={menuCategories.length > 0}
         />
       ))}
+
+      {orderModalTable && (
+        <StaffOrderModal
+          tableLabel={orderModalTable.label}
+          categories={menuCategories}
+          onClose={() => setOrderModalTable(null)}
+          onSubmit={(items) => submitStaffOrder(orderModalTable.number, items)}
+        />
+      )}
+    </div>
+  );
+}
+
+function StaffOrderModal({
+  tableLabel,
+  categories,
+  onClose,
+  onSubmit,
+}: {
+  tableLabel: string;
+  categories: MenuCategoryDTO[];
+  onClose: () => void;
+  onSubmit: (items: { menuItemId: string; quantity: number }[]) => Promise<Response>;
+}) {
+  const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? "");
+  const [cart, setCart] = useState<Record<string, number>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? categories[0];
+  const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
+
+  function updateQty(itemId: string, delta: number) {
+    setCart((prev) => {
+      const next = Math.max(0, (prev[itemId] ?? 0) + delta);
+      const copy = { ...prev };
+      if (next === 0) delete copy[itemId];
+      else copy[itemId] = next;
+      return copy;
+    });
+  }
+
+  async function submit() {
+    if (cartCount === 0 || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const items = Object.entries(cart).map(([menuItemId, quantity]) => ({ menuItemId, quantity }));
+      const res = await onSubmit(items);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "注文の登録に失敗しました");
+      }
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "注文の登録に失敗しました");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-md flex-col rounded-2xl bg-background shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <h2 className="text-base font-bold text-foreground">{tableLabel}に注文を追加</h2>
+          <button onClick={onClose} className="text-sm text-muted">
+            閉じる
+          </button>
+        </div>
+        <p className="px-4 pt-3 text-xs text-muted">電話・口頭でのご注文をこの卓の会計に代理入力します。</p>
+
+        <div className="flex gap-2 overflow-x-auto px-4 py-3">
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setActiveCategoryId(cat.id)}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium ${
+                cat.id === activeCategory?.id ? "bg-accent text-accent-foreground" : "border border-border text-muted"
+              }`}
+            >
+              {cat.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 divide-y divide-border overflow-y-auto px-4">
+          {activeCategory?.menuItems.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                <p className="text-xs text-muted">{formatYen(item.price)}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  onClick={() => updateQty(item.id, -1)}
+                  disabled={!cart[item.id]}
+                  aria-label="減らす"
+                  className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-foreground disabled:opacity-30"
+                >
+                  −
+                </button>
+                <span className="w-4 text-center text-sm font-medium tabular-nums">{cart[item.id] ?? 0}</span>
+                <button
+                  onClick={() => updateQty(item.id, 1)}
+                  aria-label="増やす"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-foreground"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {error && <p className="mx-4 mt-2 rounded-lg border border-warning bg-warning-surface px-2.5 py-1.5 text-xs font-medium text-warning">{error}</p>}
+
+        <div className="border-t border-border p-4">
+          <button
+            onClick={submit}
+            disabled={cartCount === 0 || submitting}
+            className="w-full rounded-full bg-accent py-3 text-sm font-bold text-accent-foreground disabled:opacity-50"
+          >
+            {submitting ? "送信中…" : `${cartCount}点を追加する`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -157,6 +313,8 @@ function TableFloorCard({
   onUndoCheckout,
   onResolveHelp,
   onSaveNote,
+  onOpenOrderModal,
+  canOrder,
 }: {
   entry: FloorEntry;
   busyId: string | null;
@@ -166,6 +324,8 @@ function TableFloorCard({
   onUndoCheckout: () => void;
   onResolveHelp: () => void;
   onSaveNote: (note: string) => void;
+  onOpenOrderModal: () => void;
+  canOrder: boolean;
 }) {
   const { table } = entry;
   const [noteDraft, setNoteDraft] = useState(entry.staffNote ?? "");
@@ -188,6 +348,15 @@ function TableFloorCard({
           {STATUS_LABEL[entry.status]}
         </span>
       </div>
+
+      {canOrder && (
+        <button
+          onClick={onOpenOrderModal}
+          className="mb-2 w-full rounded-lg border border-dashed border-border px-2.5 py-1.5 text-xs font-medium text-muted"
+        >
+          ＋ 口頭注文を追加
+        </button>
+      )}
 
       {entry.status === "active" && (
         <p className="text-sm text-muted">

@@ -7,10 +7,12 @@ import { signInWithCredentials, registerStaffAccount } from "@/app/staff/login/a
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const inviteFromUrl = searchParams.get("invite") ?? "";
+  const [mode, setMode] = useState<"login" | "signup">(inviteFromUrl ? "signup" : "login");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState(inviteFromUrl);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -18,7 +20,8 @@ export function LoginForm() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    const result = mode === "login" ? await signInWithCredentials(email, password) : await registerStaffAccount(email, name, password);
+    const result =
+      mode === "login" ? await signInWithCredentials(email, password) : await registerStaffAccount(email, name, password, inviteCode);
     setSubmitting(false);
     if (result.error) {
       setError(result.error);
@@ -31,16 +34,29 @@ export function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
       {mode === "signup" && (
-        <div>
-          <label className="mb-1 block text-xs font-medium text-muted">お名前</label>
-          <input
-            type="text"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground"
-          />
-        </div>
+        <>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">招待コード</label>
+            <input
+              type="text"
+              required
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              placeholder="既存スタッフから受け取ったコード"
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm uppercase text-foreground"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-muted">お名前</label>
+            <input
+              type="text"
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground"
+            />
+          </div>
+        </>
       )}
       <div>
         <label className="mb-1 block text-xs font-medium text-muted">メールアドレス</label>
