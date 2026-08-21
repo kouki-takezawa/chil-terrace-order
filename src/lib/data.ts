@@ -1,6 +1,6 @@
 import "server-only";
 import bcrypt from "bcryptjs";
-import { prisma } from "./prisma";
+import { prisma, isUniqueConstraintError } from "./prisma";
 import { getTodayRangeJST, isLunchHour, getJSTDateKey } from "./date";
 import type { Order, OrderItem } from "@prisma/client";
 
@@ -135,13 +135,23 @@ export async function deleteTable(id: string) {
   return prisma.restaurantTable.delete({ where: { id } });
 }
 
+// 同じ卓のQRから複数人がほぼ同時に初回注文したとき、素朴な
+// 「探して無ければ作る」だと二人とも「無い」と判定して別々のセッションを
+// 作ってしまう競合状態が起きる（会計が片方にしか反映されなくなる不具合の元）。
+// そこで常に作成をまず試み、DBのユニーク制約（openTableId）違反で弾かれたら
+// 「別のリクエストが先にセッションを作った」ということなので、そちらを読み直す。
 async function getOrCreateActiveSession(tableId: string) {
-  const existing = await prisma.tableSession.findFirst({
-    where: { tableId, closedAt: null },
-    orderBy: { startedAt: "desc" },
-  });
-  if (existing) return existing;
-  return prisma.tableSession.create({ data: { tableId } });
+  try {
+    return await prisma.tableSession.create({ data: { tableId, openTableId: tableId } });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const existing = await prisma.tableSession.findFirst({
+      where: { tableId, closedAt: null },
+      orderBy: { startedAt: "desc" },
+    });
+    if (existing) return existing;
+    throw error;
+  }
 }
 
 // ---- 注文番号（フリー席方式） -------------------------------------------------
@@ -197,19 +207,26 @@ export async function createOrder(input: {
   });
 }
 
-export async function getActiveSessionOrdersForTable(tableNumber: number) {
+// 客側の注文画面用。「今この卓に紐づいている最新のセッション」を会計済みかどうか
+// にかかわらず返す（会計直後は closedAt が入った状態で返る）。これにより客側の
+// 画面は「会計が終わったこと」を検知して、それ以上の注文を送れないようロックできる。
+// あえて「進行中のセッションだけ」に絞らないのは、絞ってしまうと会計直後に
+// 該当セッションが見つからなくなり、客の画面には「注文なし」の空の状態にしか
+// 見えず、会計済みであることを伝えられなくなるため。
+export async function getTableOrderStatus(tableNumber: number) {
   const table = await getTableByNumber(tableNumber);
-  if (!table) return [];
+  if (!table) return null;
   const session = await prisma.tableSession.findFirst({
-    where: { tableId: table.id, closedAt: null },
+    where: { tableId: table.id },
     orderBy: { startedAt: "desc" },
   });
-  if (!session) return [];
-  return prisma.order.findMany({
+  if (!session) return { orders: [] as OrderWithItems[], sessionClosed: false };
+  const orders = await prisma.order.findMany({
     where: { sessionId: session.id },
     orderBy: { createdAt: "desc" },
     include: { items: true },
   });
+  return { orders, sessionClosed: session.closedAt !== null };
 }
 
 export async function getOrderById(id: string) {
@@ -277,7 +294,7 @@ export async function checkoutTable(tableNumber: number) {
       where: { sessionId: session.id, status: { in: [...ACTIVE_STATUSES] } },
       data: { status: "paid" },
     }),
-    prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: new Date() } }),
+    prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: new Date(), openTableId: null } }),
   ]);
 }
 

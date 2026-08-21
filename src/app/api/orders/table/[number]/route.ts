@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getActiveSessionOrdersForTable, orderTotal } from "@/lib/data";
+import { getTableOrderStatus, orderTotal } from "@/lib/data";
 
 export async function GET(_request: Request, context: { params: Promise<{ number: string }> }) {
   const { number } = await context.params;
@@ -8,8 +8,12 @@ export async function GET(_request: Request, context: { params: Promise<{ number
     return NextResponse.json({ error: "卓番号が不正です" }, { status: 400 });
   }
 
-  const orders = await getActiveSessionOrdersForTable(tableNumber);
+  const status = await getTableOrderStatus(tableNumber);
+  if (!status) {
+    return NextResponse.json({ orders: [], sessionClosed: false });
+  }
   return NextResponse.json({
-    orders: orders.map((order) => ({ ...order, total: orderTotal(order) })),
+    orders: status.orders.map((order) => ({ ...order, total: orderTotal(order) })),
+    sessionClosed: status.sessionClosed,
   });
 }
