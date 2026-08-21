@@ -1,8 +1,17 @@
 import Link from "next/link";
 import { getShiftsForRange, listShiftMembers } from "@/lib/data";
-import { ShiftCalendar } from "@/components/staff/ShiftCalendar";
+import { ShiftDayView } from "@/components/staff/ShiftDayView";
+import { PrintButton } from "@/components/staff/PrintButton";
 
 export const dynamic = "force-dynamic";
+
+function toDateKey(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
+function todayKeyJST(): string {
+  return toDateKey(new Date(Date.now() + 9 * 60 * 60 * 1000));
+}
 
 function parseMonthParam(param: string | undefined): { year: number; month: number } {
   if (param && /^\d{4}-\d{2}$/.test(param)) {
@@ -11,10 +20,6 @@ function parseMonthParam(param: string | undefined): { year: number; month: numb
   }
   const jstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
   return { year: jstNow.getUTCFullYear(), month: jstNow.getUTCMonth() };
-}
-
-function toDateKey(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 // 月曜始まりの6週間（42日）分のグリッドを作る
@@ -30,60 +35,155 @@ function monthParam(year: number, month: number, delta: number): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">) {
-  const { month: monthQuery } = await props.searchParams;
-  const { year, month } = parseMonthParam(typeof monthQuery === "string" ? monthQuery : undefined);
+const WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"];
 
+export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">) {
+  const { view: viewParam, month: monthQuery, date: dateQuery } = await props.searchParams;
+  const view = viewParam === "day" ? "day" : "month";
+  const members = await listShiftMembers();
+
+  if (view === "day") {
+    const date = typeof dateQuery === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery) ? dateQuery : todayKeyJST();
+    const dayStart = new Date(`${date}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+    const shifts = await getShiftsForRange(dayStart, dayEnd);
+    const monthOfDate = `${date.slice(0, 4)}-${date.slice(5, 7)}`;
+    const prevDate = toDateKey(new Date(dayStart.getTime() - 86400000));
+    const nextDate = toDateKey(new Date(dayStart.getTime() + 86400000));
+    const [y, m, d] = date.split("-").map(Number);
+    const weekdayLabel = ["日", "月", "火", "水", "木", "金", "土"][new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+
+    return (
+      <div>
+        <ShiftHeader monthOfDate={monthOfDate} />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
+          <div className="flex items-center gap-2 text-sm">
+            <Link href={`/staff/shifts?view=day&date=${prevDate}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+              ‹
+            </Link>
+            <span className="min-w-32 text-center font-medium text-foreground">
+              {y}年{m}月{d}日（{weekdayLabel}）
+            </span>
+            <Link href={`/staff/shifts?view=day&date=${nextDate}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+              ›
+            </Link>
+            <Link href={`/staff/shifts?view=day&date=${todayKeyJST()}`} className="ml-1 rounded-full border border-border px-3 py-1.5 text-foreground">
+              今日
+            </Link>
+          </div>
+          <div className="flex items-center gap-2">
+            <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+            <Link href={`/staff/shifts?view=month&month=${monthOfDate}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
+              月表示に戻る
+            </Link>
+          </div>
+        </div>
+
+        {members.length === 0 && (
+          <p className="mb-4 rounded-lg border border-dashed border-border bg-surface p-3 text-sm text-muted print:hidden">
+            シフトメンバーが登録されていません。設定＞シフトメンバーから追加してください。
+          </p>
+        )}
+
+        <ShiftDayView
+          date={date}
+          members={members.map((m) => ({ id: m.id, name: m.name }))}
+          shifts={shifts.map((s) => ({
+            id: s.id,
+            memberId: s.memberId,
+            startTime: s.startTime,
+            endTime: s.endTime,
+            note: s.note,
+          }))}
+        />
+      </div>
+    );
+  }
+
+  // --- 月表示 ---
+  const { year, month } = parseMonthParam(typeof monthQuery === "string" ? monthQuery : undefined);
   const gridDays = buildMonthGrid(year, month);
   const gridStart = gridDays[0];
   const gridEnd = new Date(gridDays[gridDays.length - 1].getTime() + 24 * 60 * 60 * 1000);
+  const shifts = await getShiftsForRange(gridStart, gridEnd);
 
-  const [shifts, members] = await Promise.all([getShiftsForRange(gridStart, gridEnd), listShiftMembers()]);
-
-  const shiftsByDate = new Map<string, { id: string; memberId: string; memberName: string; note: string | null }[]>();
+  const shiftsByDate = new Map<string, { memberName: string }[]>();
   for (const shift of shifts) {
     const key = toDateKey(shift.date);
     const list = shiftsByDate.get(key) ?? [];
-    list.push({ id: shift.id, memberId: shift.memberId, memberName: shift.member.name, note: shift.note });
+    list.push({ memberName: shift.member.name });
     shiftsByDate.set(key, list);
   }
 
-  const calendarDays = gridDays.map((d) => ({
-    date: toDateKey(d),
-    inMonth: d.getUTCMonth() === month,
-    shifts: shiftsByDate.get(toDateKey(d)) ?? [],
-  }));
-
   return (
     <div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">シフト表</h1>
-          <p className="text-sm text-muted">スタッフの勤務予定を月単位で確認・編集します</p>
-        </div>
+      <ShiftHeader monthOfDate={`${year}-${String(month + 1).padStart(2, "0")}`} />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 print:hidden">
         <div className="flex items-center gap-2 text-sm">
-          <Link href={`/staff/shifts?month=${monthParam(year, month, -1)}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+          <Link href={`/staff/shifts?view=month&month=${monthParam(year, month, -1)}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
             ‹
           </Link>
           <span className="min-w-24 text-center font-medium text-foreground">
             {year}年{month + 1}月
           </span>
-          <Link href={`/staff/shifts?month=${monthParam(year, month, 1)}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
+          <Link href={`/staff/shifts?view=month&month=${monthParam(year, month, 1)}`} className="rounded-full border border-border px-3 py-1.5 text-foreground">
             ›
           </Link>
-          <Link href="/staff/shifts" className="ml-2 rounded-full border border-border px-3 py-1.5 text-foreground">
+          <Link href="/staff/shifts?view=month" className="ml-1 rounded-full border border-border px-3 py-1.5 text-foreground">
             今月
           </Link>
         </div>
+        <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
       </div>
 
       {members.length === 0 && (
-        <p className="mb-4 rounded-lg border border-dashed border-border bg-surface p-3 text-sm text-muted">
+        <p className="mb-4 rounded-lg border border-dashed border-border bg-surface p-3 text-sm text-muted print:hidden">
           シフトメンバーが登録されていません。設定＞シフトメンバーから追加してください。
         </p>
       )}
 
-      <ShiftCalendar days={calendarDays} members={members.map((m) => ({ id: m.id, name: m.name }))} />
+      <div className="mb-1 grid grid-cols-7 gap-1.5 text-center text-xs text-muted sm:gap-2">
+        {WEEKDAY_LABELS.map((w) => (
+          <div key={w}>{w}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 sm:gap-2 print:gap-1">
+        {gridDays.map((d) => {
+          const key = toDateKey(d);
+          const inMonth = d.getUTCMonth() === month;
+          const dayShifts = shiftsByDate.get(key) ?? [];
+          return (
+            <Link
+              key={key}
+              href={`/staff/shifts?view=day&date=${key}`}
+              className={`block min-h-20 rounded-xl border border-border p-1.5 text-left sm:min-h-24 sm:p-2 print:min-h-16 ${
+                inMonth ? "bg-surface" : "bg-background opacity-40"
+              } ${key === todayKeyJST() ? "border-accent" : ""}`}
+            >
+              <p className="text-xs text-muted">{d.getUTCDate()}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {dayShifts.slice(0, 3).map((s, i) => (
+                  <span key={i} className="rounded-full bg-background px-1.5 py-0.5 text-[10px] text-foreground">
+                    {s.memberName}
+                  </span>
+                ))}
+                {dayShifts.length > 3 && <span className="text-[10px] text-muted">+{dayShifts.length - 3}</span>}
+              </div>
+              {dayShifts.length > 0 && <p className="mt-1 text-[10px] text-muted">{dayShifts.length}人出勤</p>}
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ShiftHeader({ monthOfDate }: { monthOfDate: string }) {
+  return (
+    <div className="mb-4">
+      <h1 className="text-xl font-bold text-foreground">シフト表</h1>
+      <p className="text-sm text-muted print:hidden">スタッフの勤務予定を月・日で確認・編集します</p>
+      <p className="hidden text-sm text-muted print:block">{monthOfDate}</p>
     </div>
   );
 }

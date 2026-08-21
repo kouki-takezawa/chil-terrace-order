@@ -134,16 +134,18 @@ model ShiftMember {
   shifts Shift[]
 }
 
-// 1メンバー・1日ぶんの勤務予定。時間帯は自由記述（例: "11:00-15:00"）にして
-// おき、細かい時刻入力UIを持たない。
+// 1件の勤務予定（開始〜終了時刻つき）。日別タイムライン表示のため時刻を構造化
+// して持つ（"HH:mm"形式）。1メンバーが同じ日に複数件（早番・遅番など）持てる
+// よう、メンバー×日の一意制約は設けない。
 model Shift {
   id        String      @id @default(cuid())
   memberId  String
   member    ShiftMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
   date      DateTime
+  startTime String
+  endTime   String
   note      String?
   createdAt DateTime    @default(now())
 
-  @@unique([memberId, date])
   @@index([date])
 }

@@ -517,16 +517,16 @@ export async function getShiftsForRange(start: Date, end: Date) {
   return prisma.shift.findMany({
     where: { date: { gte: start, lt: end } },
     include: { member: true },
-    orderBy: { date: "asc" },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 }
 
-export async function setShift(memberId: string, date: Date, note?: string) {
-  return prisma.shift.upsert({
-    where: { memberId_date: { memberId, date } },
-    update: { note },
-    create: { memberId, date, note },
-  });
+export async function createShift(input: { memberId: string; date: Date; startTime: string; endTime: string; note?: string }) {
+  return prisma.shift.create({ data: input });
+}
+
+export async function updateShift(id: string, data: Partial<{ startTime: string; endTime: string; note: string | null }>) {
+  return prisma.shift.update({ where: { id }, data });
 }
 
 export async function removeShift(id: string) {
