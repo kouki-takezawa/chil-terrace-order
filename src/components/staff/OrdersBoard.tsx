@@ -50,8 +50,10 @@ export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] 
   }
 
   useEffect(() => {
+    refresh();
     const interval = setInterval(refresh, 6000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function updateStatus(orderId: string, status: string) {
