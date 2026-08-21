@@ -3,6 +3,8 @@ import { getReservationsForDate, getSettings, getTables } from "@/lib/data";
 import { getJSTDateKey } from "@/lib/date";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
+import { SubmitButton } from "@/components/staff/SubmitButton";
+import { StatusPillGroup } from "@/components/staff/StatusPillGroup";
 import {
   addReservationAction,
   updateReservationAction,
@@ -111,9 +113,9 @@ export default async function ReservationsPage(props: PageProps<"/staff/reservat
               <input type="hidden" name="tableId" value="" />
             )}
             <div className="flex items-center gap-2">
-              <button type="submit" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
+              <SubmitButton className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
                 保存
-              </button>
+              </SubmitButton>
               <ConfirmButton
                 confirmText={`${r.customerName}様の予約を削除しますか？`}
                 formAction={deleteReservationAction}
@@ -133,22 +135,12 @@ export default async function ReservationsPage(props: PageProps<"/staff/reservat
 
             <div className="col-span-full flex flex-wrap items-center gap-1.5 border-t border-border pt-2">
               <span className="text-[11px] text-muted">ステータス:</span>
-              {STATUS_OPTIONS.map((status) => (
-                <button
-                  key={status}
-                  type="submit"
-                  formAction={updateReservationStatusAction}
-                  name="status"
-                  value={status}
-                  formNoValidate
-                  className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                    r.status === status ? "bg-accent text-accent-foreground" : "border border-border text-muted"
-                  }`}
-                >
-                  {STATUS_LABEL[status]}
-                </button>
-              ))}
-              <input type="hidden" name="id" value={r.id} />
+              <StatusPillGroup
+                id={r.id}
+                current={r.status}
+                formAction={updateReservationStatusAction}
+                options={STATUS_OPTIONS.map((s) => ({ value: s, label: STATUS_LABEL[s] }))}
+              />
             </div>
           </form>
         ))}
@@ -199,12 +191,12 @@ export default async function ReservationsPage(props: PageProps<"/staff/reservat
           placeholder="メモ（任意）"
           className="col-span-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground"
         />
-        <button
-          type="submit"
+        <SubmitButton
+          pendingText="追加中…"
           className="col-span-full rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground sm:w-fit"
         >
           予約を追加
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

@@ -2,6 +2,7 @@ import { listStaffAccounts } from "@/lib/data";
 import { formatDate } from "@/lib/format";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
+import { SubmitButton } from "@/components/staff/SubmitButton";
 import { addAccountAction, deleteAccountAction, resetPasswordAction } from "../actions";
 
 export default async function AccountsSettingsPage(props: PageProps<"/staff/settings/accounts">) {
@@ -40,9 +41,9 @@ export default async function AccountsSettingsPage(props: PageProps<"/staff/sett
                 minLength={8}
                 className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground"
               />
-              <button type="submit" className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs text-foreground">
+              <SubmitButton pendingText="再設定中…" className="shrink-0 rounded-full border border-border px-3 py-1.5 text-xs text-foreground">
                 パスワードを再設定
-              </button>
+              </SubmitButton>
             </form>
           </div>
         ))}
@@ -74,9 +75,9 @@ export default async function AccountsSettingsPage(props: PageProps<"/staff/sett
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
           />
         </div>
-        <button type="submit" className="rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
+        <SubmitButton pendingText="追加中…" className="rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
           追加する
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

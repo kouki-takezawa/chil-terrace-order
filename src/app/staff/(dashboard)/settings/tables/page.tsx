@@ -1,6 +1,7 @@
 import { getTables } from "@/lib/data";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
+import { SubmitButton } from "@/components/staff/SubmitButton";
 import { addTableAction, renameTableAction, deleteTableAction } from "../actions";
 
 export default async function TablesSettingsPage(props: PageProps<"/staff/settings/tables">) {
@@ -26,9 +27,9 @@ export default async function TablesSettingsPage(props: PageProps<"/staff/settin
               defaultValue={table.name ?? ""}
               className="flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground"
             />
-            <button type="submit" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
+            <SubmitButton className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
               保存
-            </button>
+            </SubmitButton>
             <ConfirmButton
               confirmText={`卓${table.number}を削除しますか？`}
               formAction={deleteTableAction}
@@ -47,9 +48,9 @@ export default async function TablesSettingsPage(props: PageProps<"/staff/settin
           placeholder="卓の表示名（空欄なら「卓N」）"
           className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
         />
-        <button type="submit" className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
+        <SubmitButton pendingText="追加中…" className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
           卓を追加
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );

@@ -43,26 +43,39 @@ export async function updateSettings(data: {
 
 // 予約された価格改定（pendingPrice/applyAt）のうち、適用日を過ぎたものを
 // price に反映してクリアする。バックグラウンドジョブを持たない構成のため、
-// メニューを読み込むたびにその場で遅延適用する（次にこの関数を呼んだ時点で
-// 反映されるだけで、実運用上は数秒〜数分の遅延しか生まない）。
-async function applyScheduledMenuChanges() {
-  const due = await prisma.menuItem.findMany({
-    where: { applyAt: { lte: new Date() } },
-    select: { id: true, pendingPrice: true },
-  });
-  for (const item of due) {
-    if (item.pendingPrice == null) continue;
-    await prisma.menuItem.update({
-      where: { id: item.id },
-      data: { price: item.pendingPrice, pendingPrice: null, applyAt: null },
-    });
+// メニューを読み込むたびにその場で遅延適用する。
+//
+// 事前に別クエリで対象を探してから1件ずつUPDATEする、という素朴な実装は
+// メニュー取得のたびに余分なDB往復（往復1回あたり数百ms〜のレイテンシがある）
+// を積み重ねてしまい、体感速度を悪化させていた。ここでは既に取得済みの
+// カテゴリ一覧に対してJS側で価格を差し替えて即座に返し、DBへの反映は
+// await せずバックグラウンドで行う（レスポンスを待たせない）。
+function applyScheduledPricesInPlace<
+  T extends { menuItems: { price: number; pendingPrice: number | null; applyAt: Date | null; id: string }[] },
+>(categories: T[]): T[] {
+  const now = Date.now();
+  const toPersist: { id: string; price: number }[] = [];
+  for (const category of categories) {
+    for (const item of category.menuItems) {
+      if (item.applyAt && item.applyAt.getTime() <= now && item.pendingPrice != null) {
+        item.price = item.pendingPrice;
+        toPersist.push({ id: item.id, price: item.pendingPrice });
+      }
+    }
   }
+  if (toPersist.length > 0) {
+    Promise.all(
+      toPersist.map(({ id, price }) =>
+        prisma.menuItem.update({ where: { id }, data: { price, pendingPrice: null, applyAt: null } })
+      )
+    ).catch((err) => console.error("Failed to persist scheduled menu price", err));
+  }
+  return categories;
 }
 
 // 客側の注文画面用（販売中の商品のみ）
 export async function getMenu() {
-  await applyScheduledMenuChanges();
-  return prisma.category.findMany({
+  const categories = await prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
     include: {
       menuItems: {
@@ -71,15 +84,16 @@ export async function getMenu() {
       },
     },
   });
+  return applyScheduledPricesInPlace(categories);
 }
 
 // 設定画面用（販売停止中の商品も含む）
 export async function getAllCategoriesWithItems() {
-  await applyScheduledMenuChanges();
-  return prisma.category.findMany({
+  const categories = await prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
     include: { menuItems: { orderBy: { sortOrder: "asc" } } },
   });
+  return applyScheduledPricesInPlace(categories);
 }
 
 export async function createCategory(name: string) {

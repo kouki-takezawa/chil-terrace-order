@@ -15,18 +15,26 @@ interface Member {
   name: string;
 }
 
-const START_HOUR = 8;
+const START_HOUR = 0;
 const END_HOUR = 24;
-const HOUR_HEIGHT = 48;
+const HOUR_HEIGHT = 40;
 const HOURS = Array.from({ length: END_HOUR - START_HOUR + 1 }, (_, i) => START_HOUR + i);
+const DAY_HEIGHT = (END_HOUR - START_HOUR) * HOUR_HEIGHT;
 
 function timeToOffset(time: string): number {
   const [h, m] = time.split(":").map(Number);
   return (h - START_HOUR) * HOUR_HEIGHT + (m / 60) * HOUR_HEIGHT;
 }
 
+// 終了時刻が開始時刻以前（例: 22:00〜2:00）の場合は日をまたぐ勤務とみなし、
+// この日のタイムライン上ではその日の終わり（24:00）までで見た目を打ち切る。
 function durationHeight(start: string, end: string): number {
-  return Math.max(timeToOffset(end) - timeToOffset(start), 22);
+  const bottom = end <= start ? DAY_HEIGHT : timeToOffset(end);
+  return Math.max(bottom - timeToOffset(start), 22);
+}
+
+function endTimeLabel(start: string, end: string): string {
+  return end <= start ? `翌${end}` : end;
 }
 
 function todayKeyJST(): string {
@@ -77,8 +85,8 @@ export function ShiftDayView({ date, members, shifts: initialShifts }: { date: s
 
   async function submit() {
     if (!modal || busy) return;
-    if (endTime <= startTime) {
-      setError("終了時刻は開始時刻より後にしてください");
+    if (endTime === startTime) {
+      setError("開始時刻と終了時刻が同じです");
       return;
     }
     setBusy(true);
@@ -156,7 +164,7 @@ export function ShiftDayView({ date, members, shifts: initialShifts }: { date: s
                   +
                 </button>
               </div>
-              <div className="relative" style={{ height: HOUR_HEIGHT * (HOURS.length - 1) }}>
+              <div className="relative" style={{ height: DAY_HEIGHT }}>
                 {HOURS.map((h, i) => (
                   <div key={h} className="absolute inset-x-0 border-t border-border" style={{ top: i * HOUR_HEIGHT, opacity: 0.5 }} />
                 ))}
@@ -171,7 +179,7 @@ export function ShiftDayView({ date, members, shifts: initialShifts }: { date: s
                     style={{ top: timeToOffset(s.startTime), height: durationHeight(s.startTime, s.endTime) }}
                   >
                     <p className="truncate text-[11px] font-medium">
-                      {s.startTime}–{s.endTime}
+                      {s.startTime}–{endTimeLabel(s.startTime, s.endTime)}
                     </p>
                     {s.note && <p className="truncate text-[10px] opacity-80">{s.note}</p>}
                   </button>
