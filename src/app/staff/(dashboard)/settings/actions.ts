@@ -18,6 +18,9 @@ import {
   createStaffAccount,
   deleteStaffAccount,
   resetStaffPassword,
+  createShiftMember,
+  renameShiftMember,
+  deleteShiftMember,
   type OperationMode,
 } from "@/lib/data";
 
@@ -183,4 +186,34 @@ export async function resetPasswordAction(formData: FormData) {
   }
   await resetStaffPassword(id, password);
   revalidatePath("/staff/settings/accounts");
+}
+
+// ---- シフトメンバー -------------------------------------------------------------
+
+export async function addShiftMemberAction(formData: FormData) {
+  await requireAuth();
+  const name = str(formData, "name");
+  if (!name) return;
+  await createShiftMember(name);
+  revalidatePath("/staff/settings/shift-members");
+  revalidatePath("/staff/shifts");
+}
+
+export async function renameShiftMemberAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  const name = str(formData, "name");
+  if (!id || !name) return;
+  await renameShiftMember(id, name);
+  revalidatePath("/staff/settings/shift-members");
+  revalidatePath("/staff/shifts");
+}
+
+export async function deleteShiftMemberAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  if (!id) return;
+  await runOrRedirectWithError("/staff/settings/shift-members", () => deleteShiftMember(id));
+  revalidatePath("/staff/settings/shift-members");
+  revalidatePath("/staff/shifts");
 }

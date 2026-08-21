@@ -11,6 +11,7 @@ export function SettingsTabs({ showTables }: { showTables: boolean }) {
     { href: "/staff/settings/menu", label: "メニュー" },
     ...(showTables ? [{ href: "/staff/settings/tables", label: "テーブル" }] : []),
     { href: "/staff/settings/qr", label: "QRコード" },
+    { href: "/staff/settings/shift-members", label: "シフトメンバー" },
     { href: "/staff/settings/accounts", label: "アカウント" },
   ];
 

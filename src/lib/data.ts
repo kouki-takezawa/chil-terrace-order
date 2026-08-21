@@ -380,3 +380,155 @@ export async function resetStaffPassword(id: string, password: string) {
   const passwordHash = await bcrypt.hash(password, 10);
   return prisma.staffUser.update({ where: { id }, data: { passwordHash } });
 }
+
+// ---- 注文分析 -----------------------------------------------------------
+
+export type AnalyticsPeriod = "today" | "7d" | "30d";
+
+function getRangeForAnalyticsPeriod(period: AnalyticsPeriod): { start: Date; end: Date } {
+  const { start: todayStart, end: todayEnd } = getTodayRangeJST();
+  if (period === "today") return { start: todayStart, end: todayEnd };
+  const days = period === "7d" ? 7 : 30;
+  return { start: new Date(todayStart.getTime() - (days - 1) * 24 * 60 * 60 * 1000), end: todayEnd };
+}
+
+export async function getOrderAnalytics(period: AnalyticsPeriod) {
+  const settings = await getSettings();
+  const { start, end } = getRangeForAnalyticsPeriod(period);
+
+  const [items, orderCount] = await Promise.all([
+    prisma.orderItem.findMany({
+      where: { order: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } } },
+      include: { menuItem: { include: { category: true } } },
+    }),
+    prisma.order.count({
+      where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } },
+    }),
+  ]);
+
+  const byItem = new Map<string, { name: string; quantity: number; revenue: number }>();
+  const byCategory = new Map<string, { name: string; quantity: number; revenue: number }>();
+
+  for (const item of items) {
+    const revenue = item.price * item.quantity;
+
+    const itemBucket = byItem.get(item.menuItemId) ?? { name: item.name, quantity: 0, revenue: 0 };
+    itemBucket.quantity += item.quantity;
+    itemBucket.revenue += revenue;
+    byItem.set(item.menuItemId, itemBucket);
+
+    const categoryName = item.menuItem?.category?.name ?? "その他";
+    const categoryBucket = byCategory.get(categoryName) ?? { name: categoryName, quantity: 0, revenue: 0 };
+    categoryBucket.quantity += item.quantity;
+    categoryBucket.revenue += revenue;
+    byCategory.set(categoryName, categoryBucket);
+  }
+
+  const allItems = Array.from(byItem.values());
+  const totalQuantity = allItems.reduce((s, i) => s + i.quantity, 0);
+  const totalRevenue = allItems.reduce((s, i) => s + i.revenue, 0);
+
+  return {
+    period,
+    orderCount,
+    totalQuantity,
+    totalRevenue,
+    avgItemsPerOrder: orderCount > 0 ? Math.round((totalQuantity / orderCount) * 10) / 10 : 0,
+    topItems: allItems.sort((a, b) => b.quantity - a.quantity).slice(0, 10),
+    categoryBreakdown: Array.from(byCategory.values()).sort((a, b) => b.revenue - a.revenue),
+  };
+}
+
+// ---- 期間分析 -----------------------------------------------------------
+
+export type ReportPeriod = "7d" | "30d" | "90d";
+
+export async function getPeriodAnalysis(period: ReportPeriod) {
+  const settings = await getSettings();
+  const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
+  const { end } = getTodayRangeJST();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+
+  const orders = await prisma.order.findMany({
+    where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
+    include: { items: true },
+  });
+
+  const confirmedStatus: OrderStatus = settings.operationMode === "table" ? "paid" : "served";
+
+  const dailyMap = new Map<string, { confirmed: number; pending: number; orderCount: number; cancelledCount: number }>();
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
+    dailyMap.set(getJSTDateKey(d), { confirmed: 0, pending: 0, orderCount: 0, cancelledCount: 0 });
+  }
+
+  for (const order of orders) {
+    const key = getJSTDateKey(order.createdAt);
+    const bucket = dailyMap.get(key) ?? { confirmed: 0, pending: 0, orderCount: 0, cancelledCount: 0 };
+    if (order.status === "cancelled") {
+      bucket.cancelledCount++;
+    } else {
+      const total = orderTotal(order);
+      bucket.orderCount++;
+      if (order.status === confirmedStatus) bucket.confirmed += total;
+      else bucket.pending += total;
+    }
+    dailyMap.set(key, bucket);
+  }
+
+  const daily = Array.from(dailyMap.entries())
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([date, v]) => ({ date, ...v, total: v.confirmed + v.pending }));
+
+  const totalRevenue = daily.reduce((s, d) => s + d.total, 0);
+  const totalOrders = daily.reduce((s, d) => s + d.orderCount, 0);
+  const totalCancelled = daily.reduce((s, d) => s + d.cancelledCount, 0);
+
+  return {
+    period,
+    daily,
+    totalRevenue,
+    totalOrders,
+    totalCancelled,
+    avgOrderValue: totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0,
+  };
+}
+
+// ---- シフト表 -----------------------------------------------------------
+
+export async function listShiftMembers() {
+  return prisma.shiftMember.findMany({ orderBy: { sortOrder: "asc" } });
+}
+
+export async function createShiftMember(name: string) {
+  const max = await prisma.shiftMember.aggregate({ _max: { sortOrder: true } });
+  return prisma.shiftMember.create({ data: { name, sortOrder: (max._max.sortOrder ?? -1) + 1 } });
+}
+
+export async function renameShiftMember(id: string, name: string) {
+  return prisma.shiftMember.update({ where: { id }, data: { name } });
+}
+
+export async function deleteShiftMember(id: string) {
+  return prisma.shiftMember.delete({ where: { id } });
+}
+
+export async function getShiftsForRange(start: Date, end: Date) {
+  return prisma.shift.findMany({
+    where: { date: { gte: start, lt: end } },
+    include: { member: true },
+    orderBy: { date: "asc" },
+  });
+}
+
+export async function setShift(memberId: string, date: Date, note?: string) {
+  return prisma.shift.upsert({
+    where: { memberId_date: { memberId, date } },
+    update: { note },
+    create: { memberId, date, note },
+  });
+}
+
+export async function removeShift(id: string) {
+  return prisma.shift.delete({ where: { id } });
+}

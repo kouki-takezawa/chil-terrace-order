@@ -122,3 +122,28 @@ model OrderItem {
   price      Int
   quantity   Int
 }
+
+// シフト表に登場するメンバー（ログインアカウントとは別。勤務予定を組むためだけの
+// 名簿で、システムへのログイン権限は持たない）。
+model ShiftMember {
+  id        String   @id @default(cuid())
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  shifts Shift[]
+}
+
+// 1メンバー・1日ぶんの勤務予定。時間帯は自由記述（例: "11:00-15:00"）にして
+// おき、細かい時刻入力UIを持たない。
+model Shift {
+  id        String      @id @default(cuid())
+  memberId  String
+  member    ShiftMember @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  date      DateTime
+  note      String?
+  createdAt DateTime    @default(now())
+
+  @@unique([memberId, date])
+  @@index([date])
+}
