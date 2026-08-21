@@ -56,7 +56,8 @@ export function OrderClient({
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
   const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + (allItems.get(id)?.price ?? 0) * q, 0);
 
-  const activeOrders = orders.filter((o) => o.status !== "paid" && o.status !== "cancelled");
+  const validOrders = orders.filter((o) => o.status !== "cancelled");
+  const orderedTotal = validOrders.reduce((s, o) => s + o.total, 0);
 
   async function refreshOrders() {
     try {
@@ -125,12 +126,12 @@ export function OrderClient({
             <p className="text-xs text-muted">{restaurantName}</p>
             <h1 className="text-lg font-bold text-foreground">{tableName}</h1>
           </div>
-          {activeOrders.length > 0 && (
+          {orders.length > 0 && (
             <button
               onClick={() => setShowStatus(true)}
               className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
             >
-              注文状況（{activeOrders.length}）
+              注文履歴・合計 {formatYen(orderedTotal)}
             </button>
           )}
         </div>
@@ -213,34 +214,43 @@ export function OrderClient({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-base font-bold text-foreground">注文状況</h2>
+              <h2 className="text-base font-bold text-foreground">注文履歴</h2>
               <button onClick={() => setShowStatus(false)} className="text-sm text-muted">
                 閉じる
               </button>
             </div>
             <div className="space-y-3">
               {orders.length === 0 && <p className="text-sm text-muted">まだ注文はありません</p>}
-              {orders.map((order) => (
-                <div key={order.id} className="rounded-xl border border-border p-3">
-                  <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                    <span>{formatTime(new Date(order.createdAt))}</span>
-                    <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
-                      {ORDER_STATUS_LABEL[order.status] ?? order.status}
-                    </span>
+              {orders.map((order) => {
+                const cancelled = order.status === "cancelled";
+                return (
+                  <div key={order.id} className={`rounded-xl border border-border p-3 ${cancelled ? "opacity-50" : ""}`}>
+                    <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+                      <span>{formatTime(new Date(order.createdAt))}</span>
+                      <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
+                        {ORDER_STATUS_LABEL[order.status] ?? order.status}
+                      </span>
+                    </div>
+                    <ul className={`space-y-0.5 text-sm text-foreground ${cancelled ? "line-through" : ""}`}>
+                      {order.items.map((item) => (
+                        <li key={item.id} className="flex justify-between">
+                          <span>
+                            {item.name} × {item.quantity}
+                          </span>
+                          <span>{formatYen(item.price * item.quantity)}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="space-y-0.5 text-sm text-foreground">
-                    {order.items.map((item) => (
-                      <li key={item.id} className="flex justify-between">
-                        <span>
-                          {item.name} × {item.quantity}
-                        </span>
-                        <span>{formatYen(item.price * item.quantity)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
+                );
+              })}
             </div>
+            {orders.length > 0 && (
+              <div className="mt-4 flex justify-between border-t border-border pt-3 text-base font-bold text-foreground">
+                <span>合計</span>
+                <span>{formatYen(orderedTotal)}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
