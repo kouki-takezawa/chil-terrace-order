@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
+import { ALLERGEN_LABEL, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
+import { RecommendedBanner, StarRating } from "./OrderClient";
 
 interface MenuItemDTO {
   id: string;
@@ -9,6 +10,15 @@ interface MenuItemDTO {
   price: number;
   description: string | null;
   isRecommended: boolean;
+  allergens: string | null;
+}
+
+function allergenLabels(allergens: string | null): string[] {
+  if (!allergens) return [];
+  return allergens
+    .split(",")
+    .map((code) => ALLERGEN_LABEL[code as keyof typeof ALLERGEN_LABEL])
+    .filter((label): label is string => Boolean(label));
 }
 
 interface CategoryDTO {
@@ -30,9 +40,11 @@ interface OrderDTO {
   dailyNumber: number | null;
   items: OrderItemDTO[];
   total: number;
+  rating: number | null;
 }
 
 const STORAGE_KEY = "chil-terrace-order-ids";
+const RATABLE_STATUSES = ["served"];
 const TERMINAL_STATUSES = ["served", "cancelled"];
 
 function loadStoredIds(): string[] {
@@ -53,11 +65,16 @@ function saveStoredIds(ids: string[]) {
 export function NumberOrderClient({
   restaurantName,
   categories,
+  wifiSsid,
+  wifiPassword,
 }: {
   restaurantName: string;
   categories: CategoryDTO[];
+  wifiSsid?: string | null;
+  wifiPassword?: string | null;
 }) {
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? "");
+  const [showWifi, setShowWifi] = useState(false);
   const [cart, setCart] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -128,16 +145,37 @@ export function NumberOrderClient({
     });
   }
 
+  // 注文明細（OrderItem）はスナップショットのため商品IDを持たず、名前で突き合わせる。
+  function reorderFrom(order: OrderDTO) {
+    const skipped: string[] = [];
+    setCart((prev) => {
+      const copy = { ...prev };
+      for (const item of order.items) {
+        const current = categories.flatMap((c) => c.menuItems).find((m) => m.name === item.name);
+        if (!current) {
+          skipped.push(item.name);
+          continue;
+        }
+        copy[current.id] = (copy[current.id] ?? 0) + item.quantity;
+      }
+      return copy;
+    });
+    setShowHistory(false);
+    setView("menu");
+    setErrorMsg(skipped.length > 0 ? `${skipped.join("・")}は現在ご注文いただけません` : null);
+  }
+
   async function submitOrder() {
     if (cartCount === 0 || submitting) return;
     setSubmitting(true);
     setErrorMsg(null);
     try {
       const items = Object.entries(cart).map(([menuItemId, quantity]) => ({ menuItemId, quantity }));
+      const idempotencyKey = crypto.randomUUID();
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, idempotencyKey }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "注文に失敗しました");
@@ -156,6 +194,19 @@ export function NumberOrderClient({
       setErrorMsg(err instanceof Error ? err.message : "注文に失敗しました");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function rateOrder(orderId: string, rating: number) {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, rating } : o)));
+    try {
+      await fetch(`/api/orders/${orderId}/rate`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      });
+    } catch {
+      // 評価は付加的な情報のため、送信に失敗しても次のポーリングで実態と揃う
     }
   }
 
@@ -188,6 +239,9 @@ export function NumberOrderClient({
             <span>合計</span>
             <span>{formatYen(latestOrder.total)}</span>
           </div>
+          {RATABLE_STATUSES.includes(latestOrder.status) && (
+            <StarRating value={latestOrder.rating} onRate={(r) => rateOrder(latestOrder.id, r)} />
+          )}
         </div>
 
         <p className="mt-6 max-w-sm text-center text-xs text-muted">
@@ -211,7 +265,7 @@ export function NumberOrderClient({
         </button>
 
         {showHistory && (
-          <HistorySheet orders={orders} grandTotal={grandTotal} onClose={() => setShowHistory(false)} />
+          <HistorySheet orders={orders} grandTotal={grandTotal} onClose={() => setShowHistory(false)} onReorder={reorderFrom} />
         )}
       </div>
     );
@@ -234,6 +288,12 @@ export function NumberOrderClient({
             </button>
           )}
         </div>
+        {wifiSsid && (
+          <button onClick={() => setShowWifi((v) => !v)} className="mt-2 text-xs text-muted underline underline-offset-4">
+            Wi-Fi: {wifiSsid}
+            {showWifi && wifiPassword ? `（パスワード: ${wifiPassword}）` : ""}
+          </button>
+        )}
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {categories.map((cat) => (
             <button
@@ -249,6 +309,8 @@ export function NumberOrderClient({
         </div>
       </header>
 
+      <RecommendedBanner categories={categories} onQuickAdd={(id) => updateQty(id, 1)} />
+
       <main className="divide-y divide-border px-4">
         {activeCategory?.menuItems.map((item) => (
           <div key={item.id} className="flex items-center justify-between gap-3 py-4">
@@ -256,6 +318,9 @@ export function NumberOrderClient({
               <p className="truncate font-medium text-foreground">{item.name}</p>
               {item.description && <p className="mt-0.5 truncate text-xs text-muted">{item.description}</p>}
               <p className="mt-1 text-sm text-muted">{formatYen(item.price)}</p>
+              {allergenLabels(item.allergens).length > 0 && (
+                <p className="mt-0.5 text-[11px] text-muted">{allergenLabels(item.allergens).join("・")}を含む</p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-3">
               <button
@@ -311,10 +376,12 @@ function HistorySheet({
   orders,
   grandTotal,
   onClose,
+  onReorder,
 }: {
   orders: OrderDTO[];
   grandTotal: number;
   onClose: () => void;
+  onReorder: (order: OrderDTO) => void;
 }) {
   return (
     <div className="fixed inset-0 z-40 flex items-end bg-black/40" onClick={onClose}>
@@ -346,6 +413,14 @@ function HistorySheet({
                     </li>
                   ))}
                 </ul>
+                {!cancelled && (
+                  <button
+                    onClick={() => onReorder(order)}
+                    className="mt-2 text-xs text-muted underline underline-offset-4"
+                  >
+                    もう一度頼む
+                  </button>
+                )}
               </div>
             );
           })}

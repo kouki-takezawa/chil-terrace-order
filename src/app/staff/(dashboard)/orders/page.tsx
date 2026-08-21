@@ -25,7 +25,12 @@ export default async function StaffOrdersPage() {
       : {
           mode: "table" as const,
           tables: board.groups.map((g) => ({
-            table: { id: g.table.id, number: g.table.number, name: g.table.name },
+            table: {
+              id: g.table.id,
+              number: g.table.number,
+              name: g.table.name,
+              helpRequestedAt: g.table.helpRequestedAt ? g.table.helpRequestedAt.toISOString() : null,
+            },
             orders: g.orders.map(serializeOrder),
           })),
         };

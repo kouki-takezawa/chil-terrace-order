@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatYen, formatTime, ORDER_STATUS_LABEL } from "@/lib/format";
+import { ALLERGEN_LABEL, formatYen, formatTime, ORDER_STATUS_LABEL } from "@/lib/format";
 
 interface MenuItemDTO {
   id: string;
@@ -9,6 +9,15 @@ interface MenuItemDTO {
   price: number;
   description: string | null;
   isRecommended: boolean;
+  allergens: string | null;
+}
+
+function allergenLabels(allergens: string | null): string[] {
+  if (!allergens) return [];
+  return allergens
+    .split(",")
+    .map((code) => ALLERGEN_LABEL[code as keyof typeof ALLERGEN_LABEL])
+    .filter((label): label is string => Boolean(label));
 }
 
 interface CategoryDTO {
@@ -30,30 +39,42 @@ interface OrderDTO {
   createdAt: string;
   items: OrderItemDTO[];
   total: number;
+  rating: number | null;
 }
+
+const RATABLE_STATUSES = ["served", "paid"];
 
 export function OrderClient({
   restaurantName,
   tableNumber,
+  tableToken,
   tableName,
   categories,
+  wifiSsid,
+  wifiPassword,
 }: {
   restaurantName: string;
   tableNumber: number;
+  tableToken: string;
   tableName: string;
   categories: CategoryDTO[];
+  wifiSsid?: string | null;
+  wifiPassword?: string | null;
 }) {
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? "");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [showStatus, setShowStatus] = useState(false);
+  const [showWifi, setShowWifi] = useState(false);
+  const [splitCount, setSplitCount] = useState("");
   const [orders, setOrders] = useState<OrderDTO[]>([]);
   // このセッションが会計済みになったら true のまま固定する（次に別のお客様が
   // 同じ卓で新しいセッションを始めても、この画面が勝手に注文再開できてしまう
   // と会計後の注文が新しい客のセッションに紛れ込みかねないため、ページを
   // 再読み込みしない限り解除しない）。
   const [sessionClosed, setSessionClosed] = useState(false);
+  const [callingStaff, setCallingStaff] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const allItems = useMemo(() => new Map(categories.flatMap((c) => c.menuItems.map((i) => [i.id, i] as const))), [categories]);
@@ -67,7 +88,7 @@ export function OrderClient({
 
   async function refreshOrders() {
     try {
-      const res = await fetch(`/api/orders/table/${tableNumber}`, { cache: "no-store" });
+      const res = await fetch(`/api/orders/table/${tableNumber}?t=${encodeURIComponent(tableToken)}`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       setOrders(data.orders ?? []);
@@ -99,6 +120,26 @@ export function OrderClient({
     return () => clearTimeout(t);
   }, [toast]);
 
+  // 注文明細（OrderItem）はスナップショットのため商品IDを持たず、名前で突き合わせる。
+  // 価格改定があっても再注文自体はできるよう、現行メニューに同名の商品があれば追加する。
+  function reorderFrom(order: OrderDTO) {
+    const skipped: string[] = [];
+    setCart((prev) => {
+      const copy = { ...prev };
+      for (const item of order.items) {
+        const current = categories.flatMap((c) => c.menuItems).find((m) => m.name === item.name);
+        if (!current) {
+          skipped.push(item.name);
+          continue;
+        }
+        copy[current.id] = (copy[current.id] ?? 0) + item.quantity;
+      }
+      return copy;
+    });
+    setShowStatus(false);
+    setToast(skipped.length > 0 ? `${skipped.join("・")}は現在ご注文いただけません` : "カートに追加しました");
+  }
+
   function updateQty(itemId: string, delta: number) {
     setCart((prev) => {
       const next = Math.max(0, (prev[itemId] ?? 0) + delta);
@@ -114,10 +155,11 @@ export function OrderClient({
     setSubmitting(true);
     try {
       const items = Object.entries(cart).map(([menuItemId, quantity]) => ({ menuItemId, quantity }));
+      const idempotencyKey = crypto.randomUUID();
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tableNumber, items }),
+        body: JSON.stringify({ tableNumber, tableToken, items, idempotencyKey }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -130,6 +172,37 @@ export function OrderClient({
       setToast(err instanceof Error ? err.message : "注文に失敗しました");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function callStaffNow() {
+    if (callingStaff) return;
+    setCallingStaff(true);
+    try {
+      const res = await fetch(`/api/orders/table/${tableNumber}/call-staff`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: tableToken }),
+      });
+      if (!res.ok) throw new Error();
+      setToast("スタッフに連絡しました");
+    } catch {
+      setToast("呼び出しに失敗しました。もう一度お試しください");
+    } finally {
+      setCallingStaff(false);
+    }
+  }
+
+  async function rateOrder(orderId: string, rating: number) {
+    setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, rating } : o)));
+    try {
+      await fetch(`/api/orders/${orderId}/rate`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      });
+    } catch {
+      // 評価は付加的な情報のため、送信に失敗しても次のポーリングで実態と揃う
     }
   }
 
@@ -158,12 +231,43 @@ export function OrderClient({
               <span>合計</span>
               <span>{formatYen(orderedTotal)}</span>
             </div>
+
+            <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
+              <input
+                type="number"
+                min={1}
+                value={splitCount}
+                onChange={(e) => setSplitCount(e.target.value)}
+                placeholder="人数"
+                className="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground"
+              />
+              <span className="text-xs text-muted">人で割ると</span>
+              {Number(splitCount) > 0 && (
+                <span className="text-sm font-bold text-foreground">
+                  お一人 {formatYen(Math.ceil(orderedTotal / Number(splitCount)))}
+                </span>
+              )}
+            </div>
           </div>
         )}
 
         <p className="mt-6 max-w-sm text-center text-xs text-muted">
           このお席のご注文は会計が完了しました。追加のご注文がある場合はスタッフまでお声がけください。
         </p>
+
+        <button
+          onClick={callStaffNow}
+          disabled={callingStaff}
+          className="mt-4 rounded-full border border-border px-6 py-2.5 text-sm font-medium text-foreground disabled:opacity-50"
+        >
+          {callingStaff ? "連絡中…" : "スタッフを呼ぶ"}
+        </button>
+
+        {toast && (
+          <div className="fixed inset-x-0 bottom-10 z-30 flex justify-center px-4">
+            <div className="rounded-full bg-accent px-4 py-2 text-sm text-accent-foreground shadow-lg">{toast}</div>
+          </div>
+        )}
       </div>
     );
   }
@@ -176,15 +280,30 @@ export function OrderClient({
             <p className="text-xs text-muted">{restaurantName}</p>
             <h1 className="text-lg font-bold text-foreground">{tableName}</h1>
           </div>
-          {orders.length > 0 && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => setShowStatus(true)}
-              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
+              onClick={callStaffNow}
+              disabled={callingStaff}
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
             >
-              注文履歴・合計 {formatYen(orderedTotal)}
+              {callingStaff ? "連絡中…" : "スタッフを呼ぶ"}
             </button>
-          )}
+            {orders.length > 0 && (
+              <button
+                onClick={() => setShowStatus(true)}
+                className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
+              >
+                注文履歴・合計 {formatYen(orderedTotal)}
+              </button>
+            )}
+          </div>
         </div>
+        {wifiSsid && (
+          <button onClick={() => setShowWifi((v) => !v)} className="mt-2 text-xs text-muted underline underline-offset-4">
+            Wi-Fi: {wifiSsid}
+            {showWifi && wifiPassword ? `（パスワード: ${wifiPassword}）` : ""}
+          </button>
+        )}
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {categories.map((cat) => (
             <button
@@ -202,6 +321,8 @@ export function OrderClient({
         </div>
       </header>
 
+      <RecommendedBanner categories={categories} onQuickAdd={(id) => { updateQty(id, 1); setToast("カートに追加しました"); }} />
+
       <main className="divide-y divide-border px-4">
         {activeCategory?.menuItems.map((item) => (
           <div key={item.id} className="flex items-center justify-between gap-3 py-4">
@@ -209,6 +330,9 @@ export function OrderClient({
               <p className="truncate font-medium text-foreground">{item.name}</p>
               {item.description && <p className="mt-0.5 truncate text-xs text-muted">{item.description}</p>}
               <p className="mt-1 text-sm text-muted">{formatYen(item.price)}</p>
+              {allergenLabels(item.allergens).length > 0 && (
+                <p className="mt-0.5 text-[11px] text-muted">{allergenLabels(item.allergens).join("・")}を含む</p>
+              )}
             </div>
             <div className="flex shrink-0 items-center gap-3">
               <button
@@ -291,19 +415,99 @@ export function OrderClient({
                         </li>
                       ))}
                     </ul>
+                    {RATABLE_STATUSES.includes(order.status) && (
+                      <StarRating value={order.rating} onRate={(r) => rateOrder(order.id, r)} />
+                    )}
+                    {!cancelled && (
+                      <button
+                        onClick={() => reorderFrom(order)}
+                        className="mt-2 text-xs text-muted underline underline-offset-4"
+                      >
+                        もう一度頼む
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </div>
             {orders.length > 0 && (
-              <div className="mt-4 flex justify-between border-t border-border pt-3 text-base font-bold text-foreground">
-                <span>合計</span>
-                <span>{formatYen(orderedTotal)}</span>
-              </div>
+              <>
+                <div className="mt-4 flex justify-between border-t border-border pt-3 text-base font-bold text-foreground">
+                  <span>合計</span>
+                  <span>{formatYen(orderedTotal)}</span>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    value={splitCount}
+                    onChange={(e) => setSplitCount(e.target.value)}
+                    placeholder="人数"
+                    className="w-16 rounded-lg border border-border bg-background px-2 py-1 text-sm text-foreground"
+                  />
+                  <span className="text-xs text-muted">人で割ると</span>
+                  {Number(splitCount) > 0 && (
+                    <span className="text-sm font-bold text-foreground">
+                      お一人 {formatYen(Math.ceil(orderedTotal / Number(splitCount)))}
+                    </span>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export function RecommendedBanner({
+  categories,
+  onQuickAdd,
+}: {
+  categories: CategoryDTO[];
+  onQuickAdd: (menuItemId: string) => void;
+}) {
+  const recommended = categories.flatMap((c) => c.menuItems).filter((i) => i.isRecommended);
+  if (recommended.length === 0) return null;
+  return (
+    <div className="border-b border-border px-4 py-3">
+      <p className="mb-2 text-xs font-medium text-muted">おすすめ</p>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {recommended.map((item) => (
+          <button
+            key={item.id}
+            onClick={() => onQuickAdd(item.id)}
+            className="shrink-0 rounded-xl border border-border bg-surface px-3 py-2 text-left"
+          >
+            <p className="text-xs font-medium text-foreground">{item.name}</p>
+            <p className="text-[11px] text-muted">{formatYen(item.price)}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function StarRating({ value, onRate }: { value: number | null; onRate: (rating: number) => void }) {
+  if (value) {
+    return <p className="mt-1.5 text-xs text-muted">評価: {"★".repeat(value)}{"☆".repeat(5 - value)}</p>;
+  }
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <span className="text-xs text-muted">よろしければ評価をお願いします</span>
+      <div className="flex gap-0.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            onClick={() => onRate(n)}
+            aria-label={`${n}つ星`}
+            className="text-base text-muted"
+          >
+            ☆
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { href: "/staff/analytics", label: "注文分析" },
   { href: "/staff/reports", label: "期間分析" },
   { href: "/staff/shifts", label: "シフト表" },
+  { href: "/staff/reservations", label: "予約表" },
   { href: "/staff/settings", label: "設定" },
 ];
 

@@ -28,6 +28,9 @@ model Settings {
   restaurantName String   @default("Chil Terrace")
   // "table"（席を作って卓ごとに注文を受け取る） | "number"（フリー席・注文番号を発行する）
   operationMode  String   @default("table")
+  // 客側の注文画面に表示するWi-Fi案内（任意）。どちらも未設定なら表示しない。
+  wifiSsid       String?
+  wifiPassword   String?
   updatedAt      DateTime @updatedAt
 }
 
@@ -36,9 +39,20 @@ model RestaurantTable {
   number    Int      @unique
   name      String?
   createdAt DateTime @default(now())
+  // QRコードのURLに埋め込むランダムトークン。卓番号だけでは推測でアクセス
+  // できてしまうため、これと一致しない限り客側の注文画面・APIを拒否する。
+  // あえて@default()を付けていない: cuid()/uuid()のような関数デフォルトは
+  // 既存行への一括バックフィルができず、行ごとに異なる値が必要なこの
+  // カラムをmigrationファイルを持たないdb push運用で既存テーブルに安全に
+  // 追加できない。アプリ側（createTable、および既存卓向けの一度きりの
+  // バックフィルスクリプト）で明示的にcrypto.randomUUID()を発行する。
+  qrToken   String?  @unique
+  // 客が「スタッフを呼ぶ」を押した時刻。対応済みになったらnullに戻す。
+  helpRequestedAt DateTime?
 
-  orders   Order[]
-  sessions TableSession[]
+  orders       Order[]
+  sessions     TableSession[]
+  reservations Reservation[]
 }
 
 model Category {
@@ -60,6 +74,12 @@ model MenuItem {
   isAvailable   Boolean  @default(true)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
+  // 特定原材料8品目のコードをカンマ区切りで保持する（例: "egg,milk,wheat"）。
+  allergens     String?
+  // 価格改定の予約適用（例: 来月1日から値上げ）。applyAtを過ぎたら、次に
+  // メニューが読み込まれたタイミングでpriceに反映しクリアする（遅延適用）。
+  pendingPrice  Int?
+  applyAt       DateTime?
 
   orderItems OrderItem[]
 }
@@ -78,6 +98,9 @@ model TableSession {
   openTableId String?   @unique
   startedAt DateTime  @default(now())
   closedAt  DateTime?
+  // スタッフだけが見られる、この来店グループ（会計セッション）についてのメモ
+  // （アレルギー・記念日など）。
+  staffNote String?
 
   orders Order[]
 
@@ -106,6 +129,13 @@ model Order {
   // paid(会計済み、卓方式のみ) / cancelled(取消、いつでも遷移しうる)
   status    String   @default("pending")
   note      String?
+  // 取消（cancelled）にした理由（任意）: customer | kitchen | out_of_stock
+  cancelReason String?
+  // 客側から送られる冪等キー。通信不安定時にクライアントが同じ注文を自動で
+  // 再送しても、同じキーの注文は一度しか作られないようにするためのもの。
+  idempotencyKey String? @unique
+  // 提供後に客が任意でつける評価（1〜5）。
+  rating    Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -151,6 +181,34 @@ model Shift {
   endTime   String
   note      String?
   createdAt DateTime    @default(now())
+
+  @@index([date])
+}
+
+// シフトの日表示に添える、その日全体への申し送りメモ（1日1件）。
+model DayNote {
+  date      DateTime @id
+  note      String
+  updatedAt DateTime @updatedAt
+}
+
+// 来店予約（手動でスタッフが入力する台帳）。決済・注文とは連動しない独立した
+// 記録で、当日の来店確認・卓の割り当て検討に使う。
+model Reservation {
+  id           String   @id @default(cuid())
+  customerName String
+  phone        String?
+  partySize    Int
+  // JST基準の日付（時刻部分は00:00固定）。来店時刻は別途timeで持つ。
+  date         DateTime
+  time         String
+  tableId      String?
+  table        RestaurantTable? @relation(fields: [tableId], references: [id])
+  note         String?
+  // confirmed(予約済み) -> seated(来店済み) / cancelled(キャンセル) / no_show(無断キャンセル)
+  status       String   @default("confirmed")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([date])
 }

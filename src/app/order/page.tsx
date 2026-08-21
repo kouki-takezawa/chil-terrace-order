@@ -18,5 +18,12 @@ export default async function NumberOrderPage() {
 
   const categories = await getMenu();
 
-  return <NumberOrderClient restaurantName={settings.restaurantName} categories={categories} />;
+  return (
+    <NumberOrderClient
+      restaurantName={settings.restaurantName}
+      categories={categories}
+      wifiSsid={settings.wifiSsid}
+      wifiPassword={settings.wifiPassword}
+    />
+  );
 }

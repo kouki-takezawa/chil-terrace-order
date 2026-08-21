@@ -26,7 +26,12 @@ export async function getSettings() {
   return { ...settings, operationMode: toOperationMode(settings.operationMode) };
 }
 
-export async function updateSettings(data: { restaurantName?: string; operationMode?: OperationMode }) {
+export async function updateSettings(data: {
+  restaurantName?: string;
+  operationMode?: OperationMode;
+  wifiSsid?: string | null;
+  wifiPassword?: string | null;
+}) {
   return prisma.settings.upsert({
     where: { id: "singleton" },
     update: data,
@@ -36,8 +41,27 @@ export async function updateSettings(data: { restaurantName?: string; operationM
 
 // ---- メニュー -------------------------------------------------------------
 
+// 予約された価格改定（pendingPrice/applyAt）のうち、適用日を過ぎたものを
+// price に反映してクリアする。バックグラウンドジョブを持たない構成のため、
+// メニューを読み込むたびにその場で遅延適用する（次にこの関数を呼んだ時点で
+// 反映されるだけで、実運用上は数秒〜数分の遅延しか生まない）。
+async function applyScheduledMenuChanges() {
+  const due = await prisma.menuItem.findMany({
+    where: { applyAt: { lte: new Date() } },
+    select: { id: true, pendingPrice: true },
+  });
+  for (const item of due) {
+    if (item.pendingPrice == null) continue;
+    await prisma.menuItem.update({
+      where: { id: item.id },
+      data: { price: item.pendingPrice, pendingPrice: null, applyAt: null },
+    });
+  }
+}
+
 // 客側の注文画面用（販売中の商品のみ）
 export async function getMenu() {
+  await applyScheduledMenuChanges();
   return prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
     include: {
@@ -51,6 +75,7 @@ export async function getMenu() {
 
 // 設定画面用（販売停止中の商品も含む）
 export async function getAllCategoriesWithItems() {
+  await applyScheduledMenuChanges();
   return prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
     include: { menuItems: { orderBy: { sortOrder: "asc" } } },
@@ -78,6 +103,7 @@ export async function createMenuItem(input: {
   price: number;
   description?: string;
   isRecommended?: boolean;
+  allergens?: string;
 }) {
   const max = await prisma.menuItem.aggregate({
     where: { categoryId: input.categoryId },
@@ -97,6 +123,9 @@ export async function updateMenuItem(
     isRecommended: boolean;
     isAvailable: boolean;
     categoryId: string;
+    allergens: string | null;
+    pendingPrice: number | null;
+    applyAt: Date | null;
   }>
 ) {
   return prisma.menuItem.update({ where: { id }, data });
@@ -114,14 +143,27 @@ export async function getTableByNumber(number: number) {
   return prisma.restaurantTable.findUnique({ where: { number } });
 }
 
+// qrTokenは既存卓へ安全に一括バックフィルできないためスキーマ上は任意
+// （詳細はschema.prismaのコメント参照）。読み込みのたびに、まだトークンが
+// 無い卓（デプロイ直後の既存卓など）を見つけて自己修復的に発行する。
+async function ensureTableTokens() {
+  const missing = await prisma.restaurantTable.findMany({ where: { qrToken: null }, select: { id: true } });
+  for (const table of missing) {
+    await prisma.restaurantTable.update({ where: { id: table.id }, data: { qrToken: crypto.randomUUID() } });
+  }
+}
+
 export async function getTables() {
+  await ensureTableTokens();
   return prisma.restaurantTable.findMany({ orderBy: { number: "asc" } });
 }
 
 export async function createTable(name?: string) {
   const max = await prisma.restaurantTable.aggregate({ _max: { number: true } });
   const number = (max._max.number ?? 0) + 1;
-  return prisma.restaurantTable.create({ data: { number, name: name?.trim() || `卓${number}` } });
+  return prisma.restaurantTable.create({
+    data: { number, name: name?.trim() || `卓${number}`, qrToken: crypto.randomUUID() },
+  });
 }
 
 export async function renameTable(id: string, name: string) {
@@ -170,9 +212,22 @@ async function nextDailyOrderNumber(): Promise<number> {
 
 export async function createOrder(input: {
   tableNumber?: number;
+  tableToken?: string;
   items: { menuItemId: string; quantity: number }[];
   note?: string;
+  idempotencyKey?: string;
 }) {
+  // 冪等キーが指定されていて、すでに同じキーの注文が存在するなら新規作成せず
+  // それをそのまま返す。通信不安定でクライアントが同じ送信を自動的にやり直した
+  // ときに、注文が二重に作られるのを防ぐためのもの。
+  if (input.idempotencyKey) {
+    const existing = await prisma.order.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      include: { items: true },
+    });
+    if (existing) return existing;
+  }
+
   if (input.items.length === 0) throw new Error("注文する商品がありません");
 
   const menuItems = await prisma.menuItem.findMany({
@@ -188,22 +243,49 @@ export async function createOrder(input: {
 
   const settings = await getSettings();
 
+  async function createWithIdempotency(data: Parameters<typeof prisma.order.create>[0]["data"]) {
+    try {
+      return await prisma.order.create({ data, include: { items: true } });
+    } catch (error) {
+      // 冪等キーの競合（ほぼ同時に同じキーで2回送信された）なら、先に作られた
+      // ほうを読み直して返す。
+      if (input.idempotencyKey && isUniqueConstraintError(error)) {
+        const existing = await prisma.order.findUnique({
+          where: { idempotencyKey: input.idempotencyKey },
+          include: { items: true },
+        });
+        if (existing) return existing;
+      }
+      throw error;
+    }
+  }
+
   if (settings.operationMode === "number") {
     const dailyNumber = await nextDailyOrderNumber();
-    return prisma.order.create({
-      data: { mode: "number", dailyNumber, note: input.note, items: { create: itemsCreateData } },
-      include: { items: true },
+    return createWithIdempotency({
+      mode: "number",
+      dailyNumber,
+      note: input.note,
+      idempotencyKey: input.idempotencyKey,
+      items: { create: itemsCreateData },
     });
   }
 
   if (input.tableNumber == null) throw new Error("卓番号が必要です");
   const table = await getTableByNumber(input.tableNumber);
   if (!table) throw new Error("卓が見つかりません");
+  if (input.tableToken !== table.qrToken) {
+    throw new Error("卓の確認に失敗しました。QRコードを読み取り直してください");
+  }
   const session = await getOrCreateActiveSession(table.id);
 
-  return prisma.order.create({
-    data: { mode: "table", tableId: table.id, sessionId: session.id, note: input.note, items: { create: itemsCreateData } },
-    include: { items: true },
+  return createWithIdempotency({
+    mode: "table",
+    tableId: table.id,
+    sessionId: session.id,
+    note: input.note,
+    idempotencyKey: input.idempotencyKey,
+    items: { create: itemsCreateData },
   });
 }
 
@@ -213,9 +295,9 @@ export async function createOrder(input: {
 // あえて「進行中のセッションだけ」に絞らないのは、絞ってしまうと会計直後に
 // 該当セッションが見つからなくなり、客の画面には「注文なし」の空の状態にしか
 // 見えず、会計済みであることを伝えられなくなるため。
-export async function getTableOrderStatus(tableNumber: number) {
+export async function getTableOrderStatus(tableNumber: number, token: string) {
   const table = await getTableByNumber(tableNumber);
-  if (!table) return null;
+  if (!table || token !== table.qrToken) return null;
   const session = await prisma.tableSession.findFirst({
     where: { tableId: table.id },
     orderBy: { startedAt: "desc" },
@@ -239,7 +321,7 @@ export type KitchenBoard =
   | {
       mode: "table";
       groups: {
-        table: { id: string; number: number; name: string | null };
+        table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null };
         orders: OrderWithItems[];
       }[];
     }
@@ -265,7 +347,7 @@ export async function getKitchenOrders(): Promise<KitchenBoard> {
 
   const byTable = new Map<
     number,
-    { table: { id: string; number: number; name: string | null }; orders: typeof orders }
+    { table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null }; orders: typeof orders }
   >();
   for (const order of orders) {
     if (!order.table) continue;
@@ -276,8 +358,16 @@ export async function getKitchenOrders(): Promise<KitchenBoard> {
   return { mode: "table", groups: Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number) };
 }
 
-export async function updateOrderStatus(orderId: string, status: OrderStatus) {
-  return prisma.order.update({ where: { id: orderId }, data: { status } });
+export async function updateOrderStatus(orderId: string, status: OrderStatus, cancelReason?: string) {
+  return prisma.order.update({
+    where: { id: orderId },
+    data: { status, cancelReason: status === "cancelled" ? (cancelReason ?? null) : undefined },
+  });
+}
+
+export async function rateOrder(orderId: string, rating: number) {
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) throw new Error("評価は1〜5で指定してください");
+  return prisma.order.update({ where: { id: orderId }, data: { rating } });
 }
 
 export async function checkoutTable(tableNumber: number) {
@@ -296,6 +386,129 @@ export async function checkoutTable(tableNumber: number) {
     }),
     prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: new Date(), openTableId: null } }),
   ]);
+}
+
+// 会計取消の猶予時間。誤タップからの復帰用で、これを過ぎると取消できない。
+const UNDO_CHECKOUT_WINDOW_MS = 5 * 60 * 1000;
+
+export async function undoCheckout(tableNumber: number) {
+  const table = await getTableByNumber(tableNumber);
+  if (!table) throw new Error("卓が見つかりません");
+
+  const session = await prisma.tableSession.findFirst({
+    where: { tableId: table.id, closedAt: { not: null } },
+    orderBy: { closedAt: "desc" },
+  });
+  if (!session || !session.closedAt) throw new Error("直近に会計した記録がありません");
+  if (Date.now() - session.closedAt.getTime() > UNDO_CHECKOUT_WINDOW_MS) {
+    throw new Error("会計から時間が経ちすぎているため取り消せません");
+  }
+
+  try {
+    await prisma.$transaction([
+      prisma.order.updateMany({ where: { sessionId: session.id, status: "paid" }, data: { status: "served" } }),
+      prisma.tableSession.update({ where: { id: session.id }, data: { closedAt: null, openTableId: table.id } }),
+    ]);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new Error("すでに次のご注文が始まっているため取り消せません");
+    }
+    throw error;
+  }
+}
+
+// ---- 卓: スタッフ呼び出し ----------------------------------------------------
+
+export async function callStaff(tableNumber: number, token: string) {
+  const table = await getTableByNumber(tableNumber);
+  if (!table || token !== table.qrToken) throw new Error("卓の確認に失敗しました");
+  await prisma.restaurantTable.update({ where: { id: table.id }, data: { helpRequestedAt: new Date() } });
+}
+
+export async function resolveHelp(tableNumber: number) {
+  const table = await getTableByNumber(tableNumber);
+  if (!table) throw new Error("卓が見つかりません");
+  await prisma.restaurantTable.update({ where: { id: table.id }, data: { helpRequestedAt: null } });
+}
+
+// ---- 卓: メモ ---------------------------------------------------------------
+
+export async function setTableStaffNote(tableNumber: number, note: string) {
+  const table = await getTableByNumber(tableNumber);
+  if (!table) throw new Error("卓が見つかりません");
+  const session = await prisma.tableSession.findFirst({
+    where: { tableId: table.id, closedAt: null },
+    orderBy: { startedAt: "desc" },
+  });
+  if (!session) throw new Error("進行中のご注文がありません");
+  await prisma.tableSession.update({ where: { id: session.id }, data: { staffNote: note || null } });
+}
+
+// ---- 卓: フロアビュー ---------------------------------------------------------
+
+export type FloorTableStatus = "empty" | "active" | "just_closed";
+
+export async function getFloorStatus() {
+  const tables = await getTables();
+  const now = Date.now();
+
+  return Promise.all(
+    tables.map(async (table) => {
+      const [latestSession, latestOrder] = await Promise.all([
+        prisma.tableSession.findFirst({ where: { tableId: table.id }, orderBy: { startedAt: "desc" } }),
+        prisma.order.findFirst({
+          where: { tableId: table.id, status: { in: [...ACTIVE_STATUSES] } },
+          orderBy: { createdAt: "desc" },
+        }),
+      ]);
+
+      let status: FloorTableStatus = "empty";
+      let canUndoCheckout = false;
+      let subtotal = 0;
+
+      if (latestSession && latestSession.closedAt === null) {
+        status = "active";
+        const orders = await prisma.order.findMany({
+          where: { sessionId: latestSession.id, status: { in: [...ACTIVE_STATUSES] } },
+          include: { items: true },
+        });
+        subtotal = orders.reduce((s, o) => s + orderTotal(o), 0);
+      } else if (latestSession && latestSession.closedAt) {
+        const elapsed = now - latestSession.closedAt.getTime();
+        if (elapsed <= UNDO_CHECKOUT_WINDOW_MS) {
+          status = "just_closed";
+          canUndoCheckout = true;
+        }
+      }
+
+      return {
+        table: { id: table.id, number: table.number, name: table.name },
+        status,
+        subtotal,
+        staffNote: latestSession?.staffNote ?? null,
+        helpRequestedAt: table.helpRequestedAt,
+        lastOrderAt: latestOrder?.createdAt ?? null,
+        canUndoCheckout,
+      };
+    })
+  );
+}
+
+export async function getTodaySessionsForTable(tableNumber: number) {
+  const table = await getTableByNumber(tableNumber);
+  if (!table) return [];
+  const { start, end } = getTodayRangeJST();
+  const sessions = await prisma.tableSession.findMany({
+    where: { tableId: table.id, startedAt: { gte: start, lt: end } },
+    orderBy: { startedAt: "desc" },
+    include: { orders: { include: { items: true } } },
+  });
+  return sessions.map((s) => ({
+    id: s.id,
+    startedAt: s.startedAt,
+    closedAt: s.closedAt,
+    total: s.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + orderTotal(o), 0),
+  }));
 }
 
 // ---- 店舗側: 売上ダッシュボード ---------------------------------------------
@@ -548,4 +761,79 @@ export async function updateShift(id: string, data: Partial<{ startTime: string;
 
 export async function removeShift(id: string) {
   return prisma.shift.delete({ where: { id } });
+}
+
+// ---- シフトの日次申し送りメモ -------------------------------------------------
+
+export async function getDayNote(dateKey: string) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  return prisma.dayNote.findUnique({ where: { date } });
+}
+
+export async function upsertDayNote(dateKey: string, note: string) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (!note) {
+    await prisma.dayNote.deleteMany({ where: { date } });
+    return;
+  }
+  await prisma.dayNote.upsert({
+    where: { date },
+    update: { note },
+    create: { date, note },
+  });
+}
+
+// ---- 予約表（手動入力の来店予約台帳） -------------------------------------------
+
+export async function getReservationsForDate(dateKey: string) {
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  return prisma.reservation.findMany({
+    where: { date },
+    orderBy: { time: "asc" },
+    include: { table: true },
+  });
+}
+
+export async function createReservation(input: {
+  customerName: string;
+  phone?: string;
+  partySize: number;
+  date: string;
+  time: string;
+  tableId?: string;
+  note?: string;
+}) {
+  return prisma.reservation.create({
+    data: {
+      customerName: input.customerName,
+      phone: input.phone || null,
+      partySize: input.partySize,
+      date: new Date(`${input.date}T00:00:00.000Z`),
+      time: input.time,
+      tableId: input.tableId || null,
+      note: input.note || null,
+    },
+  });
+}
+
+export async function updateReservation(
+  id: string,
+  data: Partial<{
+    customerName: string;
+    phone: string | null;
+    partySize: number;
+    time: string;
+    tableId: string | null;
+    note: string | null;
+  }>
+) {
+  return prisma.reservation.update({ where: { id }, data });
+}
+
+export async function updateReservationStatus(id: string, status: string) {
+  return prisma.reservation.update({ where: { id }, data: { status } });
+}
+
+export async function deleteReservation(id: string) {
+  return prisma.reservation.delete({ where: { id } });
 }
