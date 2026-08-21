@@ -1,0 +1,161 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { formatTime, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
+
+interface OrderItemDTO {
+  id: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+interface OrderDTO {
+  id: string;
+  status: string;
+  note: string | null;
+  createdAt: string;
+  items: OrderItemDTO[];
+  total: number;
+}
+
+interface TableGroupDTO {
+  table: { id: string; number: number; name: string | null };
+  orders: OrderDTO[];
+}
+
+const NEXT_STATUS: Record<string, string> = {
+  pending: "preparing",
+  preparing: "served",
+};
+
+const NEXT_STATUS_LABEL: Record<string, string> = {
+  pending: "調理開始",
+  preparing: "提供済みにする",
+};
+
+export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] }) {
+  const [tables, setTables] = useState(initialTables);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/staff/orders", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setTables(data.tables ?? []);
+    } catch {
+      // 次のポーリングに任せる
+    }
+  }
+
+  useEffect(() => {
+    const interval = setInterval(refresh, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function updateStatus(orderId: string, status: string) {
+    setBusyId(orderId);
+    try {
+      await fetch(`/api/staff/orders/${orderId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      await refresh();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function checkout(tableNumber: number) {
+    setBusyId(`checkout-${tableNumber}`);
+    try {
+      await fetch(`/api/staff/tables/${tableNumber}/checkout`, { method: "POST" });
+      await refresh();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (tables.length === 0) {
+    return (
+      <div className="rounded-2xl border border-border bg-surface p-10 text-center text-sm text-muted">
+        現在、進行中の注文はありません
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {tables.map(({ table, orders }) => {
+        const tableTotal = orders.reduce((s, o) => s + o.total, 0);
+        return (
+          <div key={table.id} className="rounded-2xl border border-border bg-surface p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-bold text-foreground">{table.name ?? `卓${table.number}`}</h2>
+              <button
+                onClick={() => checkout(table.number)}
+                disabled={busyId === `checkout-${table.number}`}
+                className="rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-accent-foreground disabled:opacity-50"
+              >
+                会計
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {orders.map((order) => {
+                const next = NEXT_STATUS[order.status];
+                return (
+                  <div key={order.id} className="rounded-xl border border-border p-3">
+                    <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+                      <span>{formatTime(new Date(order.createdAt))}</span>
+                      <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
+                        {ORDER_STATUS_LABEL[order.status] ?? order.status}
+                      </span>
+                    </div>
+                    <ul className="mb-2 space-y-0.5 text-sm text-foreground">
+                      {order.items.map((item) => (
+                        <li key={item.id} className="flex justify-between">
+                          <span>
+                            {item.name} × {item.quantity}
+                          </span>
+                          <span>{formatYen(item.price * item.quantity)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex items-center gap-2">
+                      {next && (
+                        <button
+                          onClick={() => updateStatus(order.id, next)}
+                          disabled={busyId === order.id}
+                          className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground disabled:opacity-50"
+                        >
+                          {NEXT_STATUS_LABEL[order.status]}
+                        </button>
+                      )}
+                      {order.status !== "served" && (
+                        <button
+                          onClick={() => updateStatus(order.id, "cancelled")}
+                          disabled={busyId === order.id}
+                          className="rounded-full border border-border px-3 py-1 text-xs text-muted disabled:opacity-50"
+                        >
+                          取消
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm">
+              <span className="text-muted">小計</span>
+              <span className="font-bold text-foreground">{formatYen(tableTotal)}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
