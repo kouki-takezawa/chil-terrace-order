@@ -65,15 +65,38 @@ export function OrdersBoard({ initialData }: { initialData: BoardData }) {
     return () => clearInterval(interval);
   }, []);
 
+  // ステータス更新のたびに「更新→全件再取得」と2回DB往復させると体感が
+  // 遅くなるため、更新APIが返す最新の注文をそのままローカルの状態に反映する
+  // （残りの整合性は次の定期ポーリングに任せる）。
+  function patchOrderInState(updated: { id: string; status: string; cancelReason?: string | null }) {
+    setData((prev) => {
+      if (prev.mode === "number") {
+        return { ...prev, orders: prev.orders.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)) };
+      }
+      return {
+        ...prev,
+        tables: prev.tables.map((g) => ({
+          ...g,
+          orders: g.orders.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)),
+        })),
+      };
+    });
+  }
+
   async function updateStatus(orderId: string, status: string, cancelReason?: string) {
     setBusyId(orderId);
     try {
-      await fetch(`/api/staff/orders/${orderId}`, {
+      const res = await fetch(`/api/staff/orders/${orderId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, cancelReason }),
       });
-      await refresh();
+      if (res.ok) {
+        const { order } = await res.json();
+        patchOrderInState(order);
+      } else {
+        await refresh();
+      }
     } finally {
       setBusyId(null);
     }
@@ -85,18 +108,28 @@ export function OrdersBoard({ initialData }: { initialData: BoardData }) {
     setBusyId(`checkout-${tableNumber}`);
     try {
       await fetch(`/api/staff/tables/${tableNumber}/checkout`, { method: "POST" });
-      await refresh();
+      setCheckoutTarget(null);
+      // 会計は複数注文のステータスを一括で書き換えるため、個別パッチではなく
+      // 素直に再取得する（それでも従来通り1往復で済む）。
+      refresh();
     } finally {
       setBusyId(null);
-      setCheckoutTarget(null);
     }
   }
 
   async function resolveHelp(tableNumber: number) {
     setBusyId(`help-${tableNumber}`);
+    setData((prev) => {
+      if (prev.mode !== "table") return prev;
+      return {
+        ...prev,
+        tables: prev.tables.map((g) =>
+          g.table.number === tableNumber ? { ...g, table: { ...g.table, helpRequestedAt: null } } : g
+        ),
+      };
+    });
     try {
       await fetch(`/api/staff/tables/${tableNumber}/resolve-help`, { method: "POST" });
-      await refresh();
     } finally {
       setBusyId(null);
     }

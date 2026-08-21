@@ -19,10 +19,11 @@ export async function POST(request: Request) {
     typeof b.endTime !== "string" ||
     !TIME_RE.test(b.startTime) ||
     !TIME_RE.test(b.endTime) ||
-    b.endTime <= b.startTime
+    b.endTime === b.startTime
   ) {
-    return NextResponse.json({ error: "リクエストの形式が正しくありません（終了時刻は開始時刻より後にしてください）" }, { status: 400 });
+    return NextResponse.json({ error: "リクエストの形式が正しくありません" }, { status: 400 });
   }
+  // 終了時刻が開始時刻以前（例: 22:00〜2:00）の場合は日をまたぐ勤務として許可する
   const note = typeof b.note === "string" ? b.note.slice(0, 100) : undefined;
 
   try {

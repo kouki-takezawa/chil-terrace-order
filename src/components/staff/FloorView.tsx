@@ -53,12 +53,21 @@ export function FloorView({ onChanged }: { onChanged: () => void }) {
     return () => clearInterval(interval);
   }, []);
 
+  // 更新後にAPIの結果をもう一度全件取得し直すと体感が遅くなるため、結果が
+  // 分かっている変更はローカルの状態にその場で反映する。整合性は次のポーリング
+  // （8秒ごと）で保たれる。
   async function undoCheckout(tableNumber: number) {
     setBusyId(`undo-${tableNumber}`);
     try {
-      await fetch(`/api/staff/tables/${tableNumber}/undo-checkout`, { method: "POST" });
-      await refresh();
-      onChanged();
+      const res = await fetch(`/api/staff/tables/${tableNumber}/undo-checkout`, { method: "POST" });
+      if (res.ok) {
+        setFloor((prev) =>
+          prev.map((e) => (e.table.number === tableNumber ? { ...e, status: "active", canUndoCheckout: false } : e))
+        );
+        onChanged();
+      } else {
+        await refresh();
+      }
     } finally {
       setBusyId(null);
     }
@@ -66,9 +75,9 @@ export function FloorView({ onChanged }: { onChanged: () => void }) {
 
   async function resolveHelp(tableNumber: number) {
     setBusyId(`help-${tableNumber}`);
+    setFloor((prev) => prev.map((e) => (e.table.number === tableNumber ? { ...e, helpRequestedAt: null } : e)));
     try {
       await fetch(`/api/staff/tables/${tableNumber}/resolve-help`, { method: "POST" });
-      await refresh();
       onChanged();
     } finally {
       setBusyId(null);
@@ -77,13 +86,13 @@ export function FloorView({ onChanged }: { onChanged: () => void }) {
 
   async function saveNote(tableNumber: number, note: string) {
     setBusyId(`note-${tableNumber}`);
+    setFloor((prev) => prev.map((e) => (e.table.number === tableNumber ? { ...e, staffNote: note || null } : e)));
     try {
       await fetch(`/api/staff/tables/${tableNumber}/note`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note }),
       });
-      await refresh();
     } finally {
       setBusyId(null);
     }

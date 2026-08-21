@@ -14,8 +14,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 
   const startTime = typeof b?.startTime === "string" && TIME_RE.test(b.startTime) ? b.startTime : undefined;
   const endTime = typeof b?.endTime === "string" && TIME_RE.test(b.endTime) ? b.endTime : undefined;
-  if (startTime && endTime && endTime <= startTime) {
-    return NextResponse.json({ error: "終了時刻は開始時刻より後にしてください" }, { status: 400 });
+  // 終了時刻が開始時刻以前（例: 22:00〜2:00）の場合は日をまたぐ勤務として許可する
+  if (startTime && endTime && endTime === startTime) {
+    return NextResponse.json({ error: "開始時刻と終了時刻が同じです" }, { status: 400 });
   }
   const note = typeof b?.note === "string" ? b.note.slice(0, 100) : b?.note === null ? null : undefined;
 

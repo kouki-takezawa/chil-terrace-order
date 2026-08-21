@@ -2,6 +2,7 @@ import { getAllCategoriesWithItems } from "@/lib/data";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
 import { PrintButton } from "@/components/staff/PrintButton";
+import { SubmitButton } from "@/components/staff/SubmitButton";
 import { ALLERGEN_CODES, ALLERGEN_LABEL, formatYen } from "@/lib/format";
 import {
   addCategoryAction,
@@ -65,9 +66,9 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                   defaultValue={category.name}
                   className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-bold text-foreground"
                 />
-                <button type="submit" className="text-xs text-muted underline underline-offset-4">
+                <SubmitButton pendingText="保存中…" className="text-xs text-muted underline underline-offset-4">
                   名前を保存
-                </button>
+                </SubmitButton>
               </form>
               <form action={deleteCategoryAction} className="ml-auto">
                 <input type="hidden" name="id" value={category.id} />
@@ -113,9 +114,9 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                     <input type="checkbox" name="isAvailable" defaultChecked={item.isAvailable} />
                     販売中
                   </label>
-                  <button type="submit" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
+                  <SubmitButton className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
                     保存
-                  </button>
+                  </SubmitButton>
                   <ConfirmButton
                     confirmText={`「${item.name}」を削除しますか？`}
                     formAction={deleteMenuItemAction}
@@ -186,9 +187,9 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                 <input type="checkbox" name="isRecommended" />
                 おすすめ
               </label>
-              <button type="submit" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
+              <SubmitButton pendingText="追加中…" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
                 商品を追加
-              </button>
+              </SubmitButton>
               <div className="col-span-full flex flex-wrap gap-2">
                 {ALLERGEN_CODES.map((code) => (
                   <label key={code} className="flex items-center gap-1 text-[11px] text-muted">
@@ -210,9 +211,9 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
           required
           className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
         />
-        <button type="submit" className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
+        <SubmitButton pendingText="追加中…" className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground">
           カテゴリーを追加
-        </button>
+        </SubmitButton>
       </form>
       </div>
     </div>

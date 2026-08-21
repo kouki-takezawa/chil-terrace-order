@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getShiftsForRange, listShiftMembers, getDayNote } from "@/lib/data";
 import { ShiftDayView } from "@/components/staff/ShiftDayView";
 import { PrintButton } from "@/components/staff/PrintButton";
+import { SubmitButton } from "@/components/staff/SubmitButton";
 import { saveDayNoteAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -97,12 +98,12 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
             className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground print:hidden"
           />
           <p className="hidden text-sm print:block">{dayNote?.note}</p>
-          <button
-            type="submit"
+          <SubmitButton
+            pendingText="保存中…"
             className="mt-2 rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-accent-foreground print:hidden"
           >
             保存
-          </button>
+          </SubmitButton>
         </form>
 
         <ShiftDayView

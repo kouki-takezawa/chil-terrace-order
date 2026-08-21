@@ -1,5 +1,6 @@
 import { getSettings } from "@/lib/data";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
+import { SubmitButton } from "@/components/staff/SubmitButton";
 import { updateGeneralSettingsAction } from "../actions";
 
 export default async function GeneralSettingsPage(props: PageProps<"/staff/settings/general">) {
@@ -65,9 +66,9 @@ export default async function GeneralSettingsPage(props: PageProps<"/staff/setti
           <p className="mt-1 text-xs text-muted">どちらも空欄の場合、客側には表示されません。</p>
         </div>
 
-        <button type="submit" className="rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-accent-foreground">
+        <SubmitButton pendingText="保存中…" className="rounded-full bg-accent px-6 py-2.5 text-sm font-bold text-accent-foreground">
           保存する
-        </button>
+        </SubmitButton>
       </form>
     </div>
   );
