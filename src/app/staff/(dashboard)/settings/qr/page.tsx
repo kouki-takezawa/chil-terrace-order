@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import QRCode from "qrcode";
 import { getTables, getSettings } from "@/lib/data";
+import { getBaseUrl } from "@/lib/url";
 import { PrintButton } from "@/components/staff/PrintButton";
 
 // 発行するQRのURLはホスト名に依存するため静的プリレンダーを禁止する
@@ -8,10 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function QrSettingsPage() {
   const [tables, settings, headerList] = await Promise.all([getTables(), getSettings(), headers()]);
-
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "localhost:3000";
-  const protocol = headerList.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const baseUrl = `${protocol}://${host}`;
+  const baseUrl = getBaseUrl(headerList);
 
   if (settings.operationMode === "number") {
     const url = `${baseUrl}/order`;
