@@ -123,7 +123,7 @@ export async function addTableAction(formData: FormData) {
   const name = str(formData, "name");
   await createTable(name || undefined);
   revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/tables");
+  revalidatePath("/staff/settings/qr");
 }
 
 export async function renameTableAction(formData: FormData) {
@@ -133,7 +133,7 @@ export async function renameTableAction(formData: FormData) {
   if (!id || !name) return;
   await renameTable(id, name);
   revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/tables");
+  revalidatePath("/staff/settings/qr");
 }
 
 export async function deleteTableAction(formData: FormData) {
@@ -142,7 +142,7 @@ export async function deleteTableAction(formData: FormData) {
   if (!id) return;
   await runOrRedirectWithError("/staff/settings/tables", () => deleteTable(id));
   revalidatePath("/staff/settings/tables");
-  revalidatePath("/staff/tables");
+  revalidatePath("/staff/settings/qr");
 }
 
 // ---- アカウント ---------------------------------------------------------------

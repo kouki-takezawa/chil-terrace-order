@@ -9,14 +9,14 @@ const NAV_ITEMS = [
   { href: "/staff/analytics", label: "注文分析" },
   { href: "/staff/reports", label: "期間分析" },
   { href: "/staff/shifts", label: "シフト表" },
-  { href: "/staff/tables", label: "テーブルQR" },
+  { href: "/staff/settings", label: "設定" },
 ];
 
 export function MobileNav({ restaurantName }: { restaurantName: string }) {
   const pathname = usePathname();
 
   return (
-    <div className="sticky top-0 z-20 border-b border-border bg-background md:hidden">
+    <div className="sticky top-0 z-20 border-b border-border bg-background md:hidden print:hidden">
       <p className="px-4 pt-3 text-sm font-bold text-foreground">{restaurantName}</p>
       <nav className="flex gap-2 overflow-x-auto px-4 py-3">
         {NAV_ITEMS.map((item) => {

@@ -10,7 +10,6 @@ const NAV_ITEMS = [
   { href: "/staff/analytics", label: "注文分析" },
   { href: "/staff/reports", label: "期間分析" },
   { href: "/staff/shifts", label: "シフト表" },
-  { href: "/staff/tables", label: "QRコード" },
   { href: "/staff/settings", label: "設定" },
 ];
 
@@ -28,7 +27,7 @@ export function Sidebar({
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-border bg-background px-4 py-6 md:flex">
+    <aside className="hidden w-60 shrink-0 flex-col justify-between border-r border-border bg-background px-4 py-6 md:flex print:hidden">
       <div>
         <p className="text-base font-bold text-foreground">{restaurantName}</p>
         <p className="mt-0.5 text-xs text-muted">{dateLabel}</p>
