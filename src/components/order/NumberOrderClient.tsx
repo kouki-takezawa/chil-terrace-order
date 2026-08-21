@@ -11,6 +11,7 @@ interface MenuItemDTO {
   description: string | null;
   isRecommended: boolean;
   allergens: string | null;
+  imageUrl: string | null;
 }
 
 function allergenLabels(allergens: string | null): string[] {
@@ -80,6 +81,7 @@ export function NumberOrderClient({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [orders, setOrders] = useState<OrderDTO[]>([]);
   const [view, setView] = useState<"menu" | "confirmation">("menu");
+  const [showCart, setShowCart] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [restoring, setRestoring] = useState(true);
 
@@ -314,6 +316,10 @@ export function NumberOrderClient({
       <main className="divide-y divide-border px-4">
         {activeCategory?.menuItems.map((item) => (
           <div key={item.id} className="flex items-center justify-between gap-3 py-4">
+            {item.imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate font-medium text-foreground">{item.name}</p>
               {item.description && <p className="mt-0.5 truncate text-xs text-muted">{item.description}</p>}
@@ -349,10 +355,14 @@ export function NumberOrderClient({
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface px-4 py-3">
         <div className="mx-auto flex max-w-md items-center justify-between">
-          <div>
-            <p className="text-xs text-muted">{cartCount}点</p>
+          <button
+            onClick={() => setShowCart(true)}
+            disabled={cartCount === 0}
+            className="text-left disabled:opacity-50"
+          >
+            <p className="text-xs text-muted underline underline-offset-4">{cartCount}点（内容を確認）</p>
             <p className="text-lg font-bold text-foreground">{formatYen(cartTotal)}</p>
-          </div>
+          </button>
           <button
             onClick={submitOrder}
             disabled={cartCount === 0 || submitting}
@@ -362,6 +372,72 @@ export function NumberOrderClient({
           </button>
         </div>
       </div>
+
+      {showCart && (
+        <div className="fixed inset-0 z-40 flex items-end bg-black/40" onClick={() => setShowCart(false)}>
+          <div
+            className="max-h-[75vh] w-full overflow-y-auto rounded-t-2xl bg-surface p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-base font-bold text-foreground">カートの中身</h2>
+              <button onClick={() => setShowCart(false)} className="text-sm text-muted">
+                閉じる
+              </button>
+            </div>
+            <div className="space-y-3">
+              {Object.entries(cart).map(([itemId, qty]) => {
+                const item = allItems.get(itemId);
+                if (!item) return null;
+                return (
+                  <div key={itemId} className="flex items-center justify-between gap-3 rounded-xl border border-border p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                      <p className="text-xs text-muted">{formatYen(item.price)}</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button
+                        onClick={() => updateQty(itemId, -1)}
+                        aria-label="減らす"
+                        className="flex h-7 w-7 items-center justify-center rounded-full border border-border text-foreground"
+                      >
+                        −
+                      </button>
+                      <span className="w-4 text-center text-sm font-medium tabular-nums">{qty}</span>
+                      <button
+                        onClick={() => updateQty(itemId, 1)}
+                        aria-label="増やす"
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-foreground"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {cartCount === 0 && <p className="text-sm text-muted">カートは空です</p>}
+            </div>
+            {cartCount > 0 && (
+              <>
+                <div className="mt-4 flex justify-between border-t border-border pt-3 text-base font-bold text-foreground">
+                  <span>合計</span>
+                  <span>{formatYen(cartTotal)}</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowCart(false);
+                    submitOrder();
+                  }}
+                  disabled={submitting}
+                  className="mt-3 w-full rounded-full bg-accent py-3 text-sm font-bold text-accent-foreground disabled:opacity-50"
+                >
+                  {submitting ? "送信中…" : "この内容で注文する"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {errorMsg && (
         <div className="fixed inset-x-0 bottom-24 z-30 flex justify-center px-4">

@@ -22,6 +22,18 @@ model StaffUser {
   createdAt    DateTime @default(now())
 }
 
+// 新規登録に必要な招待コード。既存スタッフが発行し、1回使われると失効する。
+// URLさえ知っていれば誰でも登録できてしまう問題（README既知の制約）への対策。
+model StaffInvite {
+  id        String    @id @default(cuid())
+  code      String    @unique
+  note      String?
+  expiresAt DateTime?
+  usedAt    DateTime?
+  usedByEmail String?
+  createdAt DateTime  @default(now())
+}
+
 // 店舗全体の設定を1行だけ持つシングルトンテーブル。
 model Settings {
   id             String   @id @default("singleton")
@@ -80,6 +92,9 @@ model MenuItem {
   // メニューが読み込まれたタイミングでpriceに反映しクリアする（遅延適用）。
   pendingPrice  Int?
   applyAt       DateTime?
+  // 商品写真のURL（任意）。画像そのものはこのアプリでは保存せず、外部に
+  // ホストされた画像のURLを指定してもらう方式。
+  imageUrl      String?
 
   orderItems OrderItem[]
 }

@@ -13,6 +13,7 @@ export function SettingsTabs({ showTables }: { showTables: boolean }) {
     { href: "/staff/settings/qr", label: "QRコード" },
     { href: "/staff/settings/shift-members", label: "シフトメンバー" },
     { href: "/staff/settings/accounts", label: "アカウント" },
+    { href: "/staff/settings/invites", label: "招待コード" },
   ];
 
   return (

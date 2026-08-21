@@ -1,4 +1,4 @@
-import { getKitchenOrders, orderTotal } from "@/lib/data";
+import { getKitchenOrders, getMenu, orderTotal } from "@/lib/data";
 import { OrdersBoard } from "@/components/staff/OrdersBoard";
 
 // 注文状況をリアルタイムに反映するため、ビルド時の静的プリレンダーを禁止する
@@ -35,13 +35,23 @@ export default async function StaffOrdersPage() {
           })),
         };
 
+  // 卓方式のときだけ、フロアビューから口頭注文を代理入力できるようメニューを渡す
+  const categories = board.mode === "table" ? await getMenu() : [];
+
   return (
     <div>
       <h1 className="mb-1 text-xl font-bold text-foreground">注文管理</h1>
       <p className="mb-6 text-sm text-muted">
         {board.mode === "number" ? "受付中の注文をリアルタイムに確認・更新します" : "卓ごとの進行中の注文をリアルタイムに確認・更新します"}
       </p>
-      <OrdersBoard initialData={initialData} />
+      <OrdersBoard
+        initialData={initialData}
+        menuCategories={categories.map((c) => ({
+          id: c.id,
+          name: c.name,
+          menuItems: c.menuItems.map((i) => ({ id: i.id, name: i.name, price: i.price })),
+        }))}
+      />
     </div>
   );
 }

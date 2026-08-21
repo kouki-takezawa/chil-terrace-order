@@ -21,6 +21,8 @@ import {
   createShiftMember,
   renameShiftMember,
   deleteShiftMember,
+  createStaffInvite,
+  deleteStaffInvite,
   type OperationMode,
 } from "@/lib/data";
 import { ALLERGEN_CODES } from "@/lib/format";
@@ -103,6 +105,7 @@ export async function addMenuItemAction(formData: FormData) {
   const description = str(formData, "description");
   const isRecommended = formData.get("isRecommended") === "on";
   const allergens = allergensFromForm(formData);
+  const imageUrl = str(formData, "imageUrl");
   if (!categoryId || !name || !Number.isFinite(price) || price < 0) return;
   await createMenuItem({
     categoryId,
@@ -111,6 +114,7 @@ export async function addMenuItemAction(formData: FormData) {
     description: description || undefined,
     isRecommended,
     allergens: allergens || undefined,
+    imageUrl: imageUrl || undefined,
   });
   revalidatePath("/staff/settings/menu");
 }
@@ -126,6 +130,7 @@ export async function updateMenuItemAction(formData: FormData) {
   const allergens = allergensFromForm(formData);
   const pendingPriceRaw = str(formData, "pendingPrice");
   const applyAtRaw = str(formData, "applyAt");
+  const imageUrl = str(formData, "imageUrl");
   if (!id || !name || !Number.isFinite(price) || price < 0) return;
 
   const pendingPrice = pendingPriceRaw ? Number(pendingPriceRaw) : null;
@@ -140,6 +145,7 @@ export async function updateMenuItemAction(formData: FormData) {
     allergens: allergens || null,
     pendingPrice: pendingPrice != null && Number.isFinite(pendingPrice) ? pendingPrice : null,
     applyAt,
+    imageUrl: imageUrl || null,
   });
   revalidatePath("/staff/settings/menu");
 }
@@ -249,4 +255,23 @@ export async function deleteShiftMemberAction(formData: FormData) {
   await runOrRedirectWithError("/staff/settings/shift-members", () => deleteShiftMember(id));
   revalidatePath("/staff/settings/shift-members");
   revalidatePath("/staff/shifts");
+}
+
+// ---- 招待コード ---------------------------------------------------------------
+
+export async function createInviteAction(formData: FormData) {
+  await requireAuth();
+  const note = str(formData, "note");
+  const expiresInDaysRaw = str(formData, "expiresInDays");
+  const expiresInDays = expiresInDaysRaw ? Number(expiresInDaysRaw) : undefined;
+  await createStaffInvite(note || undefined, expiresInDays && Number.isFinite(expiresInDays) ? expiresInDays : undefined);
+  revalidatePath("/staff/settings/invites");
+}
+
+export async function deleteInviteAction(formData: FormData) {
+  await requireAuth();
+  const id = str(formData, "id");
+  if (!id) return;
+  await deleteStaffInvite(id);
+  revalidatePath("/staff/settings/invites");
 }
