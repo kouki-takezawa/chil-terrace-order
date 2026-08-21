@@ -65,12 +65,17 @@ model MenuItem {
 }
 
 // 卓の会計セッション（卓方式のみで使用）。QRから注文を始めてから会計するまでの
-// 一続きをまとめる。同じ卓で複数人が別々に注文しても、進行中のセッションが
-// あればそこに注文が積み重なる。
+// 一続きをまとめる。同じ卓で複数人が同時に別々に端末から注文しても、進行中の
+// セッションがあればそこに注文が積み重なる。
 model TableSession {
   id        String    @id @default(cuid())
   tableId   String
   table     RestaurantTable @relation(fields: [tableId], references: [id])
+  // 開いている間だけ tableId と同じ値を持ち、会計（closedAt確定）と同時にnullへ
+  // 戻すフラグ用カラム。ユニーク制約により「1卓につき進行中のセッションは常に
+  // 高々1つ」をDBレベルで保証し、複数人が同時にQRから初回注文したときに別々の
+  // セッションが二重生成される競合状態を防ぐ。
+  openTableId String?   @unique
   startedAt DateTime  @default(now())
   closedAt  DateTime?
 

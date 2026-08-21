@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatYen, formatTime, ORDER_STATUS_LABEL } from "@/lib/format";
 
 interface MenuItemDTO {
@@ -49,6 +49,12 @@ export function OrderClient({
   const [toast, setToast] = useState<string | null>(null);
   const [showStatus, setShowStatus] = useState(false);
   const [orders, setOrders] = useState<OrderDTO[]>([]);
+  // このセッションが会計済みになったら true のまま固定する（次に別のお客様が
+  // 同じ卓で新しいセッションを始めても、この画面が勝手に注文再開できてしまう
+  // と会計後の注文が新しい客のセッションに紛れ込みかねないため、ページを
+  // 再読み込みしない限り解除しない）。
+  const [sessionClosed, setSessionClosed] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const allItems = useMemo(() => new Map(categories.flatMap((c) => c.menuItems.map((i) => [i.id, i] as const))), [categories]);
   const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? categories[0];
@@ -65,6 +71,13 @@ export function OrderClient({
       if (!res.ok) return;
       const data = await res.json();
       setOrders(data.orders ?? []);
+      if (data.sessionClosed) {
+        setSessionClosed(true);
+        if (pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      }
     } catch {
       // ネットワーク一時エラーは無視して次のポーリングに任せる
     }
@@ -73,8 +86,10 @@ export function OrderClient({
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 初回表示を待たず即取得したい
     refreshOrders();
-    const interval = setInterval(refreshOrders, 8000);
-    return () => clearInterval(interval);
+    pollRef.current = setInterval(refreshOrders, 8000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableNumber]);
 
@@ -95,7 +110,7 @@ export function OrderClient({
   }
 
   async function submitOrder() {
-    if (cartCount === 0 || submitting) return;
+    if (cartCount === 0 || submitting || sessionClosed) return;
     setSubmitting(true);
     try {
       const items = Object.entries(cart).map(([menuItemId, quantity]) => ({ menuItemId, quantity }));
@@ -116,6 +131,41 @@ export function OrderClient({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (sessionClosed) {
+    return (
+      <div className="flex min-h-screen flex-col items-center bg-background px-6 py-10">
+        <p className="text-xs text-muted">{restaurantName}</p>
+        <p className="mt-6 text-sm text-muted">{tableName}</p>
+        <p className="mt-2 max-w-sm text-center text-2xl font-black text-foreground">お会計ありがとうございました</p>
+
+        {validOrders.length > 0 && (
+          <div className="mt-8 w-full max-w-sm rounded-2xl border border-border bg-surface p-4">
+            <ul className="space-y-1 text-sm text-foreground">
+              {validOrders.flatMap((order) =>
+                order.items.map((item) => (
+                  <li key={item.id} className="flex justify-between">
+                    <span>
+                      {item.name} × {item.quantity}
+                    </span>
+                    <span>{formatYen(item.price * item.quantity)}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+            <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm font-bold text-foreground">
+              <span>合計</span>
+              <span>{formatYen(orderedTotal)}</span>
+            </div>
+          </div>
+        )}
+
+        <p className="mt-6 max-w-sm text-center text-xs text-muted">
+          このお席のご注文は会計が完了しました。追加のご注文がある場合はスタッフまでお声がけください。
+        </p>
+      </div>
+    );
   }
 
   return (
