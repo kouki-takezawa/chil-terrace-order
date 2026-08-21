@@ -3,6 +3,7 @@ import { getOrderAnalytics, type AnalyticsPeriod } from "@/lib/data";
 import { formatYen } from "@/lib/format";
 import { StatCard } from "@/components/staff/StatCard";
 import { CategoryPie } from "@/components/staff/CategoryPie";
+import { ExportLinks } from "@/components/staff/ExportLinks";
 
 const PERIOD_LABEL: Record<AnalyticsPeriod, string> = { today: "本日", "7d": "過去7日間", "30d": "過去30日間" };
 
@@ -16,18 +17,21 @@ export default async function StaffAnalyticsPage(props: PageProps<"/staff/analyt
       <h1 className="mb-1 text-xl font-bold text-foreground">注文分析</h1>
       <p className="mb-4 text-sm text-muted">人気メニューや時間帯ごとの注文傾向を分析します</p>
 
-      <div className="mb-6 flex gap-1 border-b border-border">
-        {(Object.keys(PERIOD_LABEL) as AnalyticsPeriod[]).map((p) => (
-          <Link
-            key={p}
-            href={`/staff/analytics?period=${p}`}
-            className={`border-b-2 px-4 py-2 text-sm font-medium ${
-              period === p ? "border-accent text-foreground" : "border-transparent text-muted"
-            }`}
-          >
-            {PERIOD_LABEL[p]}
-          </Link>
-        ))}
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-border">
+        <div className="flex gap-1">
+          {(Object.keys(PERIOD_LABEL) as AnalyticsPeriod[]).map((p) => (
+            <Link
+              key={p}
+              href={`/staff/analytics?period=${p}`}
+              className={`border-b-2 px-4 py-2 text-sm font-medium ${
+                period === p ? "border-accent text-foreground" : "border-transparent text-muted"
+              }`}
+            >
+              {PERIOD_LABEL[p]}
+            </Link>
+          ))}
+        </div>
+        <ExportLinks href="/api/staff/export/analytics" params={{ period }} className="mb-2" />
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
