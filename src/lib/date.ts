@@ -22,3 +22,12 @@ export function getJSTHour(date: Date): number {
 export function isLunchHour(date: Date): boolean {
   return getJSTHour(date) < 17;
 }
+
+// 注文番号カウンタのキーに使う、JST基準の日付文字列（例: "2026-08-21"）。
+export function getJSTDateKey(now: Date = new Date()): string {
+  const jstNow = new Date(now.getTime() + JST_OFFSET_MS);
+  const y = jstNow.getUTCFullYear();
+  const m = String(jstNow.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(jstNow.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}

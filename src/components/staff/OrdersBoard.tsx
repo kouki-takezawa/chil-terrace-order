@@ -15,6 +15,7 @@ interface OrderDTO {
   status: string;
   note: string | null;
   createdAt: string;
+  dailyNumber: number | null;
   items: OrderItemDTO[];
   total: number;
 }
@@ -24,6 +25,8 @@ interface TableGroupDTO {
   orders: OrderDTO[];
 }
 
+type BoardData = { mode: "table"; tables: TableGroupDTO[] } | { mode: "number"; orders: OrderDTO[] };
+
 const NEXT_STATUS: Record<string, string> = {
   pending: "preparing",
   preparing: "served",
@@ -31,29 +34,29 @@ const NEXT_STATUS: Record<string, string> = {
 
 const NEXT_STATUS_LABEL: Record<string, string> = {
   pending: "調理開始",
-  preparing: "提供済みにする",
+  preparing: "受け渡し済みにする",
 };
 
-export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] }) {
-  const [tables, setTables] = useState(initialTables);
+export function OrdersBoard({ initialData }: { initialData: BoardData }) {
+  const [data, setData] = useState<BoardData>(initialData);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   async function refresh() {
     try {
       const res = await fetch("/api/staff/orders", { cache: "no-store" });
       if (!res.ok) return;
-      const data = await res.json();
-      setTables(data.tables ?? []);
+      const json = await res.json();
+      setData(json);
     } catch {
       // 次のポーリングに任せる
     }
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 初回表示を待たず即取得したい
     refresh();
     const interval = setInterval(refresh, 6000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function updateStatus(orderId: string, status: string) {
@@ -80,7 +83,24 @@ export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] 
     }
   }
 
-  if (tables.length === 0) {
+  if (data.mode === "number") {
+    if (data.orders.length === 0) {
+      return (
+        <div className="rounded-2xl border border-border bg-surface p-10 text-center text-sm text-muted">
+          現在、進行中の注文はありません
+        </div>
+      );
+    }
+    return (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        {data.orders.map((order) => (
+          <OrderCard key={order.id} order={order} busyId={busyId} onUpdateStatus={updateStatus} showNumber />
+        ))}
+      </div>
+    );
+  }
+
+  if (data.tables.length === 0) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-10 text-center text-sm text-muted">
         現在、進行中の注文はありません
@@ -90,7 +110,7 @@ export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] 
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {tables.map(({ table, orders }) => {
+      {data.tables.map(({ table, orders }) => {
         const tableTotal = orders.reduce((s, o) => s + o.total, 0);
         return (
           <div key={table.id} className="rounded-2xl border border-border bg-surface p-4">
@@ -106,49 +126,9 @@ export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] 
             </div>
 
             <div className="space-y-3">
-              {orders.map((order) => {
-                const next = NEXT_STATUS[order.status];
-                return (
-                  <div key={order.id} className="rounded-xl border border-border p-3">
-                    <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                      <span>{formatTime(new Date(order.createdAt))}</span>
-                      <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
-                        {ORDER_STATUS_LABEL[order.status] ?? order.status}
-                      </span>
-                    </div>
-                    <ul className="mb-2 space-y-0.5 text-sm text-foreground">
-                      {order.items.map((item) => (
-                        <li key={item.id} className="flex justify-between">
-                          <span>
-                            {item.name} × {item.quantity}
-                          </span>
-                          <span>{formatYen(item.price * item.quantity)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="flex items-center gap-2">
-                      {next && (
-                        <button
-                          onClick={() => updateStatus(order.id, next)}
-                          disabled={busyId === order.id}
-                          className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground disabled:opacity-50"
-                        >
-                          {NEXT_STATUS_LABEL[order.status]}
-                        </button>
-                      )}
-                      {order.status !== "served" && (
-                        <button
-                          onClick={() => updateStatus(order.id, "cancelled")}
-                          disabled={busyId === order.id}
-                          className="rounded-full border border-border px-3 py-1 text-xs text-muted disabled:opacity-50"
-                        >
-                          取消
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {orders.map((order) => (
+                <OrderCard key={order.id} order={order} busyId={busyId} onUpdateStatus={updateStatus} />
+              ))}
             </div>
 
             <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm">
@@ -158,6 +138,60 @@ export function OrdersBoard({ initialTables }: { initialTables: TableGroupDTO[] 
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function OrderCard({
+  order,
+  busyId,
+  onUpdateStatus,
+  showNumber,
+}: {
+  order: OrderDTO;
+  busyId: string | null;
+  onUpdateStatus: (orderId: string, status: string) => void;
+  showNumber?: boolean;
+}) {
+  const next = NEXT_STATUS[order.status];
+  return (
+    <div className="rounded-xl border border-border bg-surface p-3">
+      <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
+        <span>{showNumber ? `#${order.dailyNumber}` : formatTime(new Date(order.createdAt))}</span>
+        <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
+          {ORDER_STATUS_LABEL[order.status] ?? order.status}
+        </span>
+      </div>
+      <ul className="mb-2 space-y-0.5 text-sm text-foreground">
+        {order.items.map((item) => (
+          <li key={item.id} className="flex justify-between">
+            <span>
+              {item.name} × {item.quantity}
+            </span>
+            <span>{formatYen(item.price * item.quantity)}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-center gap-2">
+        {next && (
+          <button
+            onClick={() => onUpdateStatus(order.id, next)}
+            disabled={busyId === order.id}
+            className="rounded-full bg-accent px-3 py-1 text-xs font-medium text-accent-foreground disabled:opacity-50"
+          >
+            {NEXT_STATUS_LABEL[order.status]}
+          </button>
+        )}
+        {order.status !== "served" && (
+          <button
+            onClick={() => onUpdateStatus(order.id, "cancelled")}
+            disabled={busyId === order.id}
+            className="rounded-full border border-border px-3 py-1 text-xs text-muted disabled:opacity-50"
+          >
+            取消
+          </button>
+        )}
+      </div>
     </div>
   );
 }

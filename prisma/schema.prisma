@@ -22,6 +22,15 @@ model StaffUser {
   createdAt    DateTime @default(now())
 }
 
+// 店舗全体の設定を1行だけ持つシングルトンテーブル。
+model Settings {
+  id             String   @id @default("singleton")
+  restaurantName String   @default("Chil Terrace")
+  // "table"（席を作って卓ごとに注文を受け取る） | "number"（フリー席・注文番号を発行する）
+  operationMode  String   @default("table")
+  updatedAt      DateTime @updatedAt
+}
+
 model RestaurantTable {
   id        String   @id @default(cuid())
   number    Int      @unique
@@ -55,10 +64,9 @@ model MenuItem {
   orderItems OrderItem[]
 }
 
-// 卓の会計セッション。QRから注文を始めてから会計するまでの一続きをまとめる。
-// 同じ卓で複数人が別々に注文しても、進行中のセッションがあればそこに注文が
-// 積み重なる（画面上部の注意書き「同じ卓のQRから複数人が別々に注文しても、
-// 店側では同じ卓にまとめて表示されます」に対応）。
+// 卓の会計セッション（卓方式のみで使用）。QRから注文を始めてから会計するまでの
+// 一続きをまとめる。同じ卓で複数人が別々に注文しても、進行中のセッションが
+// あればそこに注文が積み重なる。
 model TableSession {
   id        String    @id @default(cuid())
   tableId   String
@@ -71,14 +79,26 @@ model TableSession {
   @@index([tableId, closedAt])
 }
 
+// 注文番号方式で使う、日付ごとの通し番号カウンタ。JSTの日付文字列
+// （例: "2026-08-21"）をキーにして、日が変わったら1から採番し直す。
+model OrderCounter {
+  dateKey String @id
+  count   Int    @default(0)
+}
+
 model Order {
   id        String   @id @default(cuid())
-  tableId   String
-  table     RestaurantTable @relation(fields: [tableId], references: [id])
-  sessionId String
-  session   TableSession @relation(fields: [sessionId], references: [id])
-  // pending(受付) -> preparing(調理中) -> served(提供済み) -> paid(会計済み)
-  // cancelled(取消) はいつでも遷移しうる
+  // 注文発生時点の運用モードを記録する（"table" | "number"）。設定を後で
+  // 変更しても過去の注文の扱いが変わらないようにするため。
+  mode      String
+  tableId   String?
+  table     RestaurantTable? @relation(fields: [tableId], references: [id])
+  sessionId String?
+  session   TableSession?    @relation(fields: [sessionId], references: [id])
+  // 注文番号方式のみで使用（卓方式ではnull）
+  dailyNumber Int?
+  // pending(受付) -> preparing(調理中) -> served(提供済み/受け渡し済み) ->
+  // paid(会計済み、卓方式のみ) / cancelled(取消、いつでも遷移しうる)
   status    String   @default("pending")
   note      String?
   createdAt DateTime @default(now())
@@ -87,6 +107,7 @@ model Order {
   items OrderItem[]
 
   @@index([status, createdAt])
+  @@index([mode, dailyNumber])
 }
 
 model OrderItem {
