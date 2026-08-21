@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { formatTime, formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
 import { FloorView } from "./FloorView";
 
@@ -257,9 +257,13 @@ function ActiveOrdersView({
   resolveHelp: (tableNumber: number) => void;
 }) {
   // pollingで6秒ごとにdataが更新されるため、そのタイミングに合わせて
-  // 「現在時刻」も再計算する（render中に直接Date.now()を呼ぶと純粋性ルールに
-  // 反するため、dataの変化に紐づけたuseMemoで計算する）。
-  const now = useMemo(() => Date.now(), [data]);
+  // 「現在時刻」も再計算する。Date.now()はrender中に直接呼べない（純粋性ルール
+  // に反する）ため、副作用（useEffect）としてdataの変化のたびに取得する。
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 放置検知の基準時刻を毎ポーリングごとに取り直したい
+    setNow(Date.now());
+  }, [data]);
 
   if (data.tables.length === 0) {
     return (

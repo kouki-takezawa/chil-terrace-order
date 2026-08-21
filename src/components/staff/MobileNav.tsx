@@ -5,11 +5,11 @@ import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
   { href: "/staff/orders", label: "注文管理" },
+  { href: "/staff/reservations", label: "予約表" },
   { href: "/staff/dashboard", label: "売上" },
   { href: "/staff/analytics", label: "注文分析" },
   { href: "/staff/reports", label: "期間分析" },
   { href: "/staff/shifts", label: "シフト表" },
-  { href: "/staff/reservations", label: "予約表" },
   { href: "/staff/settings", label: "設定" },
 ];
 

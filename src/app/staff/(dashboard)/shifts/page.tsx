@@ -3,6 +3,7 @@ import { getShiftsForRange, listShiftMembers, getDayNote } from "@/lib/data";
 import { ShiftDayView } from "@/components/staff/ShiftDayView";
 import { PrintButton } from "@/components/staff/PrintButton";
 import { SubmitButton } from "@/components/staff/SubmitButton";
+import { ExportLinks } from "@/components/staff/ExportLinks";
 import { saveDayNoteAction } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -74,6 +75,7 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
             </Link>
           </div>
           <div className="flex items-center gap-2">
+            <ExportLinks href="/api/staff/export/shifts" params={{ month: monthOfDate }} />
             <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
             <Link href={`/staff/shifts?view=month&month=${monthOfDate}`} className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground">
               月表示に戻る
@@ -154,7 +156,10 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
             今月
           </Link>
         </div>
-        <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+        <div className="flex items-center gap-2">
+          <ExportLinks href="/api/staff/export/shifts" params={{ month: `${year}-${String(month + 1).padStart(2, "0")}` }} />
+          <PrintButton className="rounded-full border border-border px-3 py-1.5 text-sm text-foreground" />
+        </div>
       </div>
 
       {members.length === 0 && (

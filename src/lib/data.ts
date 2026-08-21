@@ -839,6 +839,7 @@ export async function updateReservation(
     time: string;
     tableId: string | null;
     note: string | null;
+    status: string;
   }>
 ) {
   return prisma.reservation.update({ where: { id }, data });
