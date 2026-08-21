@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatYen, formatTime, ORDER_STATUS_LABEL } from "@/lib/format";
+import { formatYen, ORDER_STATUS_LABEL } from "@/lib/format";
 
 interface MenuItemDTO {
   id: string;
@@ -27,28 +27,27 @@ interface OrderItemDTO {
 interface OrderDTO {
   id: string;
   status: string;
-  createdAt: string;
+  dailyNumber: number | null;
   items: OrderItemDTO[];
   total: number;
 }
 
-export function OrderClient({
+const STORAGE_KEY = "chil-terrace-last-order-id";
+const TERMINAL_STATUSES = ["served", "cancelled"];
+
+export function NumberOrderClient({
   restaurantName,
-  tableNumber,
-  tableName,
   categories,
 }: {
   restaurantName: string;
-  tableNumber: number;
-  tableName: string;
   categories: CategoryDTO[];
 }) {
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id ?? "");
   const [cart, setCart] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
-  const [showStatus, setShowStatus] = useState(false);
-  const [orders, setOrders] = useState<OrderDTO[]>([]);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<OrderDTO | null>(null);
+  const [restoring, setRestoring] = useState(true);
 
   const allItems = useMemo(() => new Map(categories.flatMap((c) => c.menuItems.map((i) => [i.id, i] as const))), [categories]);
   const activeCategory = categories.find((c) => c.id === activeCategoryId) ?? categories[0];
@@ -56,32 +55,40 @@ export function OrderClient({
   const cartCount = Object.values(cart).reduce((s, q) => s + q, 0);
   const cartTotal = Object.entries(cart).reduce((s, [id, q]) => s + (allItems.get(id)?.price ?? 0) * q, 0);
 
-  const activeOrders = orders.filter((o) => o.status !== "paid" && o.status !== "cancelled");
-
-  async function refreshOrders() {
+  async function fetchOrder(id: string): Promise<OrderDTO | null> {
     try {
-      const res = await fetch(`/api/orders/table/${tableNumber}`, { cache: "no-store" });
-      if (!res.ok) return;
+      const res = await fetch(`/api/orders/${id}`, { cache: "no-store" });
+      if (!res.ok) return null;
       const data = await res.json();
-      setOrders(data.orders ?? []);
+      return data.order ?? null;
     } catch {
-      // ネットワーク一時エラーは無視して次のポーリングに任せる
+      return null;
     }
   }
 
+  // ページを開いたとき、前回の注文が進行中ならその画面を復元する
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- 初回表示を待たず即取得したい
-    refreshOrders();
-    const interval = setInterval(refreshOrders, 8000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableNumber]);
+    const lastId = localStorage.getItem(STORAGE_KEY);
+    if (!lastId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 復元対象がなければ即座に読み込み中を解除する
+      setRestoring(false);
+      return;
+    }
+    fetchOrder(lastId).then((order) => {
+      if (order) setConfirmedOrder(order);
+      setRestoring(false);
+    });
+  }, []);
 
+  // 確認画面表示中は、受け渡し済み/取消になるまで数秒おきに状態を確認する
   useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2500);
-    return () => clearTimeout(t);
-  }, [toast]);
+    if (!confirmedOrder || TERMINAL_STATUSES.includes(confirmedOrder.status)) return;
+    const interval = setInterval(async () => {
+      const updated = await fetchOrder(confirmedOrder.id);
+      if (updated) setConfirmedOrder(updated);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [confirmedOrder]);
 
   function updateQty(itemId: string, delta: number) {
     setCart((prev) => {
@@ -96,43 +103,86 @@ export function OrderClient({
   async function submitOrder() {
     if (cartCount === 0 || submitting) return;
     setSubmitting(true);
+    setErrorMsg(null);
     try {
       const items = Object.entries(cart).map(([menuItemId, quantity]) => ({ menuItemId, quantity }));
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tableNumber, items }),
+        body: JSON.stringify({ items }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "注文に失敗しました");
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "注文に失敗しました");
+
+      const order = data.order;
+      const total = order.items.reduce((s: number, i: OrderItemDTO) => s + i.price * i.quantity, 0);
+      const orderDto: OrderDTO = { ...order, total };
+      localStorage.setItem(STORAGE_KEY, order.id);
+      setConfirmedOrder(orderDto);
       setCart({});
-      setToast("注文を受け付けました");
-      refreshOrders();
     } catch (err) {
-      setToast(err instanceof Error ? err.message : "注文に失敗しました");
+      setErrorMsg(err instanceof Error ? err.message : "注文に失敗しました");
     } finally {
       setSubmitting(false);
     }
   }
 
+  function orderAgain() {
+    localStorage.removeItem(STORAGE_KEY);
+    setConfirmedOrder(null);
+  }
+
+  if (restoring) {
+    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted">読み込み中…</div>;
+  }
+
+  if (confirmedOrder) {
+    return (
+      <div className="flex min-h-screen flex-col items-center bg-background px-6 py-10">
+        <p className="text-xs text-muted">{restaurantName}</p>
+        <p className="mt-6 text-sm text-muted">あなたの注文番号</p>
+        <p className="mt-1 text-6xl font-black tabular-nums text-foreground">#{confirmedOrder.dailyNumber}</p>
+        <span className="mt-4 rounded-full bg-surface px-4 py-1.5 text-sm font-medium text-foreground">
+          {ORDER_STATUS_LABEL[confirmedOrder.status] ?? confirmedOrder.status}
+        </span>
+
+        <div className="mt-8 w-full max-w-sm rounded-2xl border border-border bg-surface p-4">
+          <ul className="space-y-1 text-sm text-foreground">
+            {confirmedOrder.items.map((item) => (
+              <li key={item.id} className="flex justify-between">
+                <span>
+                  {item.name} × {item.quantity}
+                </span>
+                <span>{formatYen(item.price * item.quantity)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm font-bold text-foreground">
+            <span>合計</span>
+            <span>{formatYen(confirmedOrder.total)}</span>
+          </div>
+        </div>
+
+        <p className="mt-6 max-w-sm text-center text-xs text-muted">
+          番号が呼ばれたらお受け取りください。お会計は店舗にてお願いいたします。
+        </p>
+
+        <button
+          onClick={orderAgain}
+          className="mt-8 rounded-full border border-border px-6 py-2.5 text-sm font-medium text-foreground"
+        >
+          追加で注文する
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background pb-28">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 pt-4 pb-3 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted">{restaurantName}</p>
-            <h1 className="text-lg font-bold text-foreground">{tableName}</h1>
-          </div>
-          {activeOrders.length > 0 && (
-            <button
-              onClick={() => setShowStatus(true)}
-              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
-            >
-              注文状況（{activeOrders.length}）
-            </button>
-          )}
+        <div>
+          <p className="text-xs text-muted">{restaurantName}</p>
+          <h1 className="text-lg font-bold text-foreground">ご注文</h1>
         </div>
         <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
           {categories.map((cat) => (
@@ -140,9 +190,7 @@ export function OrderClient({
               key={cat.id}
               onClick={() => setActiveCategoryId(cat.id)}
               className={`shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-                cat.id === activeCategory?.id
-                  ? "bg-accent text-accent-foreground"
-                  : "bg-surface text-muted border border-border"
+                cat.id === activeCategory?.id ? "bg-accent text-accent-foreground" : "bg-surface text-muted border border-border"
               }`}
             >
               {cat.name}
@@ -200,48 +248,9 @@ export function OrderClient({
         </div>
       </div>
 
-      {toast && (
+      {errorMsg && (
         <div className="fixed inset-x-0 bottom-24 z-30 flex justify-center px-4">
-          <div className="rounded-full bg-accent px-4 py-2 text-sm text-accent-foreground shadow-lg">{toast}</div>
-        </div>
-      )}
-
-      {showStatus && (
-        <div className="fixed inset-0 z-40 flex items-end bg-black/40" onClick={() => setShowStatus(false)}>
-          <div
-            className="max-h-[75vh] w-full overflow-y-auto rounded-t-2xl bg-surface p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-base font-bold text-foreground">注文状況</h2>
-              <button onClick={() => setShowStatus(false)} className="text-sm text-muted">
-                閉じる
-              </button>
-            </div>
-            <div className="space-y-3">
-              {orders.length === 0 && <p className="text-sm text-muted">まだ注文はありません</p>}
-              {orders.map((order) => (
-                <div key={order.id} className="rounded-xl border border-border p-3">
-                  <div className="mb-1.5 flex items-center justify-between text-xs text-muted">
-                    <span>{formatTime(new Date(order.createdAt))}</span>
-                    <span className="rounded-full bg-background px-2 py-0.5 font-medium text-foreground">
-                      {ORDER_STATUS_LABEL[order.status] ?? order.status}
-                    </span>
-                  </div>
-                  <ul className="space-y-0.5 text-sm text-foreground">
-                    {order.items.map((item) => (
-                      <li key={item.id} className="flex justify-between">
-                        <span>
-                          {item.name} × {item.quantity}
-                        </span>
-                        <span>{formatYen(item.price * item.quantity)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
+          <div className="rounded-full bg-accent px-4 py-2 text-sm text-accent-foreground shadow-lg">{errorMsg}</div>
         </div>
       )}
     </div>

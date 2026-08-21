@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createOrder } from "@/lib/data";
 
 interface CreateOrderBody {
-  tableNumber: number;
+  tableNumber?: number;
   items: { menuItemId: string; quantity: number }[];
   note?: string;
 }
@@ -10,7 +10,7 @@ interface CreateOrderBody {
 function isValidBody(body: unknown): body is CreateOrderBody {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
-  if (typeof b.tableNumber !== "number") return false;
+  if (b.tableNumber !== undefined && typeof b.tableNumber !== "number") return false;
   if (!Array.isArray(b.items) || b.items.length === 0) return false;
   return b.items.every(
     (i) =>
@@ -28,7 +28,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const order = await createOrder(body.tableNumber, body.items, body.note?.slice(0, 500));
+    const order = await createOrder({
+      tableNumber: body.tableNumber,
+      items: body.items,
+      note: body.note?.slice(0, 500),
+    });
     return NextResponse.json({ order }, { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "注文の作成に失敗しました";

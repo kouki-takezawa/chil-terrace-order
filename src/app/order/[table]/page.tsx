@@ -1,11 +1,18 @@
-import { getMenu, getTableByNumber } from "@/lib/data";
+import { redirect } from "next/navigation";
+import { getMenu, getTableByNumber, getSettings } from "@/lib/data";
 import { OrderClient } from "@/components/order/OrderClient";
 
-const restaurantName = process.env.NEXT_PUBLIC_RESTAURANT_NAME ?? "Chil Terrace";
+// 卓ごとのQR先。運用方式の変更をすぐに反映するため静的プリレンダーを禁止する
+export const dynamic = "force-dynamic";
 
 export default async function OrderPage({ params }: PageProps<"/order/[table]">) {
   const { table: tableParam } = await params;
   const tableNumber = Number(tableParam);
+
+  const settings = await getSettings();
+  if (settings.operationMode === "number") {
+    redirect("/order");
+  }
 
   if (!Number.isInteger(tableNumber)) {
     return <NotFoundMessage />;
@@ -20,7 +27,7 @@ export default async function OrderPage({ params }: PageProps<"/order/[table]">)
 
   return (
     <OrderClient
-      restaurantName={restaurantName}
+      restaurantName={settings.restaurantName}
       tableNumber={tableNumber}
       tableName={table.name ?? `卓${table.number}`}
       categories={categories}

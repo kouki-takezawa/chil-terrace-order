@@ -1,12 +1,23 @@
 import { NextResponse } from "next/server";
+import { requireStaffSession } from "@/lib/apiAuth";
 import { getKitchenOrders, orderTotal } from "@/lib/data";
 
-// 現段階はログイン機能を無効化しているため認証チェックなし（src/lib/apiAuth.ts
-// のrequireStaffSessionは温存してあるので、認証を戻す際はここで呼び出す）。
 export async function GET() {
-  const groups = await getKitchenOrders();
+  const session = await requireStaffSession();
+  if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+
+  const board = await getKitchenOrders();
+
+  if (board.mode === "number") {
+    return NextResponse.json({
+      mode: "number",
+      orders: board.orders.map((order) => ({ ...order, total: orderTotal(order) })),
+    });
+  }
+
   return NextResponse.json({
-    tables: groups.map((g) => ({
+    mode: "table",
+    tables: board.groups.map((g) => ({
       table: g.table,
       orders: g.orders.map((order) => ({ ...order, total: orderTotal(order) })),
     })),

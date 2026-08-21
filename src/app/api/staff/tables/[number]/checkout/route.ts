@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
+import { requireStaffSession } from "@/lib/apiAuth";
 import { checkoutTable } from "@/lib/data";
 
-// 現段階はログイン機能を無効化しているため認証チェックなし。
 export async function POST(_request: Request, context: { params: Promise<{ number: string }> }) {
+  const session = await requireStaffSession();
+  if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+
   const { number } = await context.params;
   const tableNumber = Number(number);
   if (!Number.isInteger(tableNumber)) {

@@ -1,10 +1,12 @@
 import "server-only";
+import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
-import { getTodayRangeJST, isLunchHour } from "./date";
+import { getTodayRangeJST, isLunchHour, getJSTDateKey } from "./date";
 import type { Order, OrderItem } from "@prisma/client";
 
 export const ACTIVE_STATUSES = ["pending", "preparing", "served"] as const;
 export type OrderStatus = "pending" | "preparing" | "served" | "paid" | "cancelled";
+export type OperationMode = "table" | "number";
 
 type OrderWithItems = Order & { items: OrderItem[] };
 
@@ -12,8 +14,29 @@ export function orderTotal(order: OrderWithItems): number {
   return order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 }
 
+// ---- 設定 -------------------------------------------------------------
+
+function toOperationMode(value: string): OperationMode {
+  return value === "number" ? "number" : "table";
+}
+
+export async function getSettings() {
+  const existing = await prisma.settings.findUnique({ where: { id: "singleton" } });
+  const settings = existing ?? (await prisma.settings.create({ data: { id: "singleton" } }));
+  return { ...settings, operationMode: toOperationMode(settings.operationMode) };
+}
+
+export async function updateSettings(data: { restaurantName?: string; operationMode?: OperationMode }) {
+  return prisma.settings.upsert({
+    where: { id: "singleton" },
+    update: data,
+    create: { id: "singleton", ...data },
+  });
+}
+
 // ---- メニュー -------------------------------------------------------------
 
+// 客側の注文画面用（販売中の商品のみ）
 export async function getMenu() {
   return prisma.category.findMany({
     orderBy: { sortOrder: "asc" },
@@ -26,7 +49,66 @@ export async function getMenu() {
   });
 }
 
-// ---- 客側: 注文 -----------------------------------------------------------
+// 設定画面用（販売停止中の商品も含む）
+export async function getAllCategoriesWithItems() {
+  return prisma.category.findMany({
+    orderBy: { sortOrder: "asc" },
+    include: { menuItems: { orderBy: { sortOrder: "asc" } } },
+  });
+}
+
+export async function createCategory(name: string) {
+  const max = await prisma.category.aggregate({ _max: { sortOrder: true } });
+  return prisma.category.create({ data: { name, sortOrder: (max._max.sortOrder ?? -1) + 1 } });
+}
+
+export async function renameCategory(id: string, name: string) {
+  return prisma.category.update({ where: { id }, data: { name } });
+}
+
+export async function deleteCategory(id: string) {
+  const count = await prisma.menuItem.count({ where: { categoryId: id } });
+  if (count > 0) throw new Error("商品が残っているカテゴリーは削除できません。先に商品を削除・移動してください");
+  return prisma.category.delete({ where: { id } });
+}
+
+export async function createMenuItem(input: {
+  categoryId: string;
+  name: string;
+  price: number;
+  description?: string;
+  isRecommended?: boolean;
+}) {
+  const max = await prisma.menuItem.aggregate({
+    where: { categoryId: input.categoryId },
+    _max: { sortOrder: true },
+  });
+  return prisma.menuItem.create({
+    data: { ...input, sortOrder: (max._max.sortOrder ?? -1) + 1 },
+  });
+}
+
+export async function updateMenuItem(
+  id: string,
+  data: Partial<{
+    name: string;
+    price: number;
+    description: string | null;
+    isRecommended: boolean;
+    isAvailable: boolean;
+    categoryId: string;
+  }>
+) {
+  return prisma.menuItem.update({ where: { id }, data });
+}
+
+export async function deleteMenuItem(id: string) {
+  const used = await prisma.orderItem.count({ where: { menuItemId: id } });
+  if (used > 0) throw new Error("注文履歴がある商品は削除できません。「販売停止」を使ってください");
+  return prisma.menuItem.delete({ where: { id } });
+}
+
+// ---- テーブル（卓方式） ------------------------------------------------------
 
 export async function getTableByNumber(number: number) {
   return prisma.restaurantTable.findUnique({ where: { number } });
@@ -34,6 +116,23 @@ export async function getTableByNumber(number: number) {
 
 export async function getTables() {
   return prisma.restaurantTable.findMany({ orderBy: { number: "asc" } });
+}
+
+export async function createTable(name?: string) {
+  const max = await prisma.restaurantTable.aggregate({ _max: { number: true } });
+  const number = (max._max.number ?? 0) + 1;
+  return prisma.restaurantTable.create({ data: { number, name: name?.trim() || `卓${number}` } });
+}
+
+export async function renameTable(id: string, name: string) {
+  return prisma.restaurantTable.update({ where: { id }, data: { name } });
+}
+
+export async function deleteTable(id: string) {
+  const count = await prisma.order.count({ where: { tableId: id } });
+  if (count > 0) throw new Error("注文履歴がある卓は削除できません");
+  await prisma.tableSession.deleteMany({ where: { tableId: id } });
+  return prisma.restaurantTable.delete({ where: { id } });
 }
 
 async function getOrCreateActiveSession(tableId: string) {
@@ -45,36 +144,55 @@ async function getOrCreateActiveSession(tableId: string) {
   return prisma.tableSession.create({ data: { tableId } });
 }
 
-export async function createOrder(
-  tableNumber: number,
-  items: { menuItemId: string; quantity: number }[],
-  note?: string
-) {
-  const table = await getTableByNumber(tableNumber);
-  if (!table) throw new Error("卓が見つかりません");
-  if (items.length === 0) throw new Error("注文する商品がありません");
+// ---- 注文番号（フリー席方式） -------------------------------------------------
+
+async function nextDailyOrderNumber(): Promise<number> {
+  const dateKey = getJSTDateKey();
+  const counter = await prisma.orderCounter.upsert({
+    where: { dateKey },
+    create: { dateKey, count: 1 },
+    update: { count: { increment: 1 } },
+  });
+  return counter.count;
+}
+
+// ---- 客側: 注文 -----------------------------------------------------------
+
+export async function createOrder(input: {
+  tableNumber?: number;
+  items: { menuItemId: string; quantity: number }[];
+  note?: string;
+}) {
+  if (input.items.length === 0) throw new Error("注文する商品がありません");
 
   const menuItems = await prisma.menuItem.findMany({
-    where: { id: { in: items.map((i) => i.menuItemId) }, isAvailable: true },
+    where: { id: { in: input.items.map((i) => i.menuItemId) }, isAvailable: true },
   });
   const menuItemById = new Map(menuItems.map((m) => [m.id, m]));
+  const itemsCreateData = input.items.map(({ menuItemId, quantity }) => {
+    const menuItem = menuItemById.get(menuItemId);
+    if (!menuItem) throw new Error("商品が見つかりません");
+    if (quantity < 1) throw new Error("数量が不正です");
+    return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
+  });
 
+  const settings = await getSettings();
+
+  if (settings.operationMode === "number") {
+    const dailyNumber = await nextDailyOrderNumber();
+    return prisma.order.create({
+      data: { mode: "number", dailyNumber, note: input.note, items: { create: itemsCreateData } },
+      include: { items: true },
+    });
+  }
+
+  if (input.tableNumber == null) throw new Error("卓番号が必要です");
+  const table = await getTableByNumber(input.tableNumber);
+  if (!table) throw new Error("卓が見つかりません");
   const session = await getOrCreateActiveSession(table.id);
 
   return prisma.order.create({
-    data: {
-      tableId: table.id,
-      sessionId: session.id,
-      note,
-      items: {
-        create: items.map(({ menuItemId, quantity }) => {
-          const menuItem = menuItemById.get(menuItemId);
-          if (!menuItem) throw new Error("商品が見つかりません");
-          if (quantity < 1) throw new Error("数量が不正です");
-          return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
-        }),
-      },
-    },
+    data: { mode: "table", tableId: table.id, sessionId: session.id, note: input.note, items: { create: itemsCreateData } },
     include: { items: true },
   });
 }
@@ -94,24 +212,51 @@ export async function getActiveSessionOrdersForTable(tableNumber: number) {
   });
 }
 
+export async function getOrderById(id: string) {
+  return prisma.order.findUnique({ where: { id }, include: { items: true } });
+}
+
 // ---- 店舗側: 注文管理 --------------------------------------------------------
 
-export async function getKitchenOrders() {
+export type KitchenBoard =
+  | {
+      mode: "table";
+      groups: {
+        table: { id: string; number: number; name: string | null };
+        orders: OrderWithItems[];
+      }[];
+    }
+  | { mode: "number"; orders: OrderWithItems[] };
+
+export async function getKitchenOrders(): Promise<KitchenBoard> {
+  const settings = await getSettings();
+
+  if (settings.operationMode === "number") {
+    const orders = await prisma.order.findMany({
+      where: { mode: "number", status: { in: ["pending", "preparing"] } },
+      orderBy: { dailyNumber: "asc" },
+      include: { items: true },
+    });
+    return { mode: "number", orders };
+  }
+
   const orders = await prisma.order.findMany({
-    where: { status: { in: [...ACTIVE_STATUSES] } },
+    where: { mode: "table", status: { in: [...ACTIVE_STATUSES] } },
     orderBy: { createdAt: "asc" },
     include: { items: true, table: true },
   });
 
-  const byTable = new Map<number, { table: { id: string; number: number; name: string | null }; orders: typeof orders }>();
+  const byTable = new Map<
+    number,
+    { table: { id: string; number: number; name: string | null }; orders: typeof orders }
+  >();
   for (const order of orders) {
+    if (!order.table) continue;
     const key = order.table.number;
-    if (!byTable.has(key)) {
-      byTable.set(key, { table: order.table, orders: [] });
-    }
+    if (!byTable.has(key)) byTable.set(key, { table: order.table, orders: [] });
     byTable.get(key)!.orders.push(order);
   }
-  return Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number);
+  return { mode: "table", groups: Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number) };
 }
 
 export async function updateOrderStatus(orderId: string, status: OrderStatus) {
@@ -139,22 +284,26 @@ export async function checkoutTable(tableNumber: number) {
 // ---- 店舗側: 売上ダッシュボード ---------------------------------------------
 
 export async function getDashboardSummary() {
+  const settings = await getSettings();
   const { start, end } = getTodayRangeJST();
 
   const [orders, closedSessions] = await Promise.all([
     prisma.order.findMany({
-      where: { createdAt: { gte: start, lt: end } },
+      where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
       include: { items: true },
     }),
-    prisma.tableSession.count({
-      where: { closedAt: { gte: start, lt: end } },
-    }),
+    settings.operationMode === "table"
+      ? prisma.tableSession.count({ where: { closedAt: { gte: start, lt: end } } })
+      : Promise.resolve(undefined),
   ]);
 
-  let confirmedSales = 0;
-  let pendingEstimate = 0;
+  const confirmedStatus: OrderStatus = settings.operationMode === "table" ? "paid" : "served";
+
+  let confirmedAmount = 0;
+  let pendingAmount = 0;
   let cancelledCount = 0;
   let orderCount = 0;
+  let servedCount = 0;
 
   const hourly = new Map<number, { lunch: number; dinner: number }>();
 
@@ -165,10 +314,11 @@ export async function getDashboardSummary() {
       continue;
     }
     orderCount++;
-    if (order.status === "paid") {
-      confirmedSales += total;
+    if (order.status === confirmedStatus) {
+      confirmedAmount += total;
+      if (settings.operationMode === "number") servedCount++;
     } else {
-      pendingEstimate += total;
+      pendingAmount += total;
     }
 
     const jstHour = new Date(order.createdAt.getTime() + 9 * 60 * 60 * 1000).getUTCHours();
@@ -178,7 +328,7 @@ export async function getDashboardSummary() {
     hourly.set(jstHour, bucket);
   }
 
-  const totalToday = confirmedSales + pendingEstimate;
+  const totalToday = confirmedAmount + pendingAmount;
   const avgOrderValue = orderCount > 0 ? Math.round(totalToday / orderCount) : 0;
 
   const hourlyBreakdown = Array.from(hourly.entries())
@@ -189,15 +339,44 @@ export async function getDashboardSummary() {
   const dinnerTotal = hourlyBreakdown.reduce((s, h) => s + h.dinner, 0);
 
   return {
+    mode: settings.operationMode,
     totalToday,
-    confirmedSales,
-    pendingEstimate,
+    confirmedAmount,
+    pendingAmount,
     orderCount,
     avgOrderValue,
-    checkoutTableCount: closedSessions,
     cancelledCount,
+    checkoutTableCount: closedSessions,
+    servedCount,
     hourlyBreakdown,
     lunchTotal,
     dinnerTotal,
   };
+}
+
+// ---- スタッフアカウント -----------------------------------------------------
+
+export async function listStaffAccounts() {
+  return prisma.staffUser.findMany({
+    orderBy: { createdAt: "asc" },
+    select: { id: true, email: true, name: true, createdAt: true },
+  });
+}
+
+export async function createStaffAccount(email: string, name: string, password: string) {
+  const passwordHash = await bcrypt.hash(password, 10);
+  return prisma.staffUser.create({
+    data: { email: email.trim().toLowerCase(), name, passwordHash },
+  });
+}
+
+export async function deleteStaffAccount(id: string) {
+  const total = await prisma.staffUser.count();
+  if (total <= 1) throw new Error("最後の1件のアカウントは削除できません");
+  return prisma.staffUser.delete({ where: { id } });
+}
+
+export async function resetStaffPassword(id: string, password: string) {
+  const passwordHash = await bcrypt.hash(password, 10);
+  return prisma.staffUser.update({ where: { id }, data: { passwordHash } });
 }
