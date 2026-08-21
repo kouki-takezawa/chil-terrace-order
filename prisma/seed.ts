@@ -5,6 +5,7 @@
 import "../src/lib/load-env";
 import { prisma } from "../src/lib/prisma";
 import bcrypt from "bcryptjs";
+import { CURRENT_MENU } from "./menu-data";
 
 async function main() {
   // --- 設定（シングルトン行）。なければ作成するだけで、既存の設定は変更しない ---
@@ -37,53 +38,12 @@ async function main() {
   }
 
   // --- カテゴリ + メニュー: カテゴリが1件も無いときだけ初期メニューを作る ---------
+  // 内容は prisma/menu-data.ts（紙メニュー「チルパリ 〜Terrace酒場〜 FOOD MENU」の
+  // データ化）を参照する。既存のDBにすでに旧メニューが入っている場合は、このseedでは
+  // 上書きされない（下記の説明の通り）ので、`npm run db:reset-menu` を使うこと。
   const categoryCount = await prisma.category.count();
   if (categoryCount === 0) {
-    const categories: {
-      name: string;
-      sortOrder: number;
-      items: { name: string; price: number; description?: string; isRecommended?: boolean }[];
-    }[] = [
-      {
-        name: "おすすめ",
-        sortOrder: 0,
-        items: [
-          { name: "本日の刺身盛り合わせ", price: 1200, description: "仕入れによって内容が変わります", isRecommended: true },
-          { name: "出汁巻き玉子", price: 580, isRecommended: true },
-          { name: "炙り明太子ポテサラ", price: 620, isRecommended: true },
-        ],
-      },
-      {
-        name: "フード",
-        sortOrder: 1,
-        items: [
-          { name: "唐揚げ", price: 680 },
-          { name: "枝豆", price: 380 },
-          { name: "焼き鳥盛り合わせ（5本）", price: 980 },
-          { name: "だし巻き玉子", price: 580 },
-          { name: "海鮮サラダ", price: 780 },
-          { name: "牛すじ煮込み", price: 620 },
-          { name: "石焼ビビンバ", price: 890 },
-          { name: "本日のおにぎり", price: 320 },
-        ],
-      },
-      {
-        name: "ドリンク",
-        sortOrder: 2,
-        items: [
-          { name: "生ビール", price: 580 },
-          { name: "ハイボール", price: 480 },
-          { name: "レモンサワー", price: 480 },
-          { name: "梅酒ロック", price: 520 },
-          { name: "ウーロン茶", price: 350 },
-          { name: "烏龍ハイ", price: 480 },
-          { name: "日本酒（冷）", price: 680 },
-          { name: "ソフトドリンク各種", price: 350 },
-        ],
-      },
-    ];
-
-    for (const category of categories) {
+    for (const category of CURRENT_MENU) {
       const cat = await prisma.category.create({ data: { name: category.name, sortOrder: category.sortOrder } });
       for (let i = 0; i < category.items.length; i++) {
         const item = category.items[i];

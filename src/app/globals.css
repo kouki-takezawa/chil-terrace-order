@@ -1,15 +1,26 @@
 @import "tailwindcss";
 
+/*
+ * ブランドカラーはクリーム色と白の2色のみで構成する。読みやすさのために必要な
+ * インク色（本文文字色）・アクセント色（ボタン等）・警告色は、いずれもクリーム
+ * 色相の濃淡（トーン違い）として作る。赤や青など別系統の色は使わない。
+ */
 :root {
-  --background: #f4f4f2;
-  --foreground: #1c1c1a;
-  --surface: #ffffff;
-  --border: #e6e5e0;
-  --accent: #22221f;
-  --accent-foreground: #ffffff;
-  --muted: #6b6a63;
-  --chart-lunch: #d9552b;
-  --chart-dinner: #2563eb;
+  --background: #faf3e5; /* クリーム（背景） */
+  --surface: #ffffff; /* 白（カード・パネル） */
+  --foreground: #4a3a26; /* クリームの最も濃いトーン（本文インク） */
+  --border: #e7dac0; /* クリームの薄いトーン（境界線） */
+  --accent: #8a6a3b; /* クリームの濃いトーン（ボタン等の強調） */
+  --accent-foreground: #ffffff; /* 白（アクセント上の文字） */
+  --muted: #8c795c; /* クリームの中間トーン（補助テキスト） */
+  --warning: #6b4a1f; /* 警告・取消・削除用（濃いクリームトーン、色相は同じ） */
+  --warning-surface: #f3e6cd; /* 警告用の背景（薄いクリームトーン） */
+  --chart-1: #8a6a3b;
+  --chart-2: #d8c194;
+  --chart-3: #4a3a26;
+  --chart-4: #c9ad78;
+  --chart-5: #6b5636;
+  --chart-6: #efe2c2;
 }
 
 @theme inline {
@@ -20,8 +31,14 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-muted: var(--muted);
-  --color-chart-lunch: var(--chart-lunch);
-  --color-chart-dinner: var(--chart-dinner);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
   --font-sans: var(--font-noto-sans-jp);
 }
 

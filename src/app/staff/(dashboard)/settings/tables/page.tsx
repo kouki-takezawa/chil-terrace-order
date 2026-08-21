@@ -32,7 +32,7 @@ export default async function TablesSettingsPage(props: PageProps<"/staff/settin
             <ConfirmButton
               confirmText={`卓${table.number}を削除しますか？`}
               formAction={deleteTableAction}
-              className="rounded-full border border-border px-3 py-1.5 text-xs text-red-600"
+              className="rounded-full border border-border px-3 py-1.5 text-xs text-warning"
             >
               削除
             </ConfirmButton>

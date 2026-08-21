@@ -64,7 +64,7 @@ export function LoginForm() {
         />
         {mode === "signup" && <p className="mt-1 text-xs text-muted">8文字以上</p>}
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="rounded-lg border border-warning bg-warning-surface px-3 py-2 text-sm font-medium text-warning">{error}</p>}
       <button
         type="submit"
         disabled={submitting}
