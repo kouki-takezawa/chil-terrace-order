@@ -33,14 +33,9 @@ export default async function HomePage() {
         </Link>
       )}
 
-      <div className="flex gap-6">
-        <Link href="/staff/login" className="text-sm text-muted underline underline-offset-4">
-          店舗スタッフの方はこちら
-        </Link>
-        <Link href="/demo" className="text-sm text-muted underline underline-offset-4">
-          デモ画面（スマホ×タブレット）
-        </Link>
-      </div>
+      <Link href="/staff/login" className="text-sm text-muted underline underline-offset-4">
+        店舗スタッフの方はこちら
+      </Link>
     </div>
   );
 }

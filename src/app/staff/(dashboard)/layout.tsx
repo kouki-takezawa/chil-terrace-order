@@ -28,7 +28,7 @@ export default async function StaffDashboardLayout({ children }: { children: Rea
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <MobileNav restaurantName={settings.restaurantName} />
-        <div className="hidden items-center justify-end border-b border-border px-6 py-4 md:flex">
+        <div className="hidden items-center justify-end border-b border-border px-6 py-4 md:flex print:hidden">
           <div className="rounded-full border border-border bg-surface px-4 py-2 text-sm">
             <span className="text-muted">本日の売上　</span>
             <span className="font-bold text-foreground">{formatYen(summary.totalToday)}</span>
