@@ -3,6 +3,9 @@ import { formatYen } from "@/lib/format";
 import { StatCard } from "@/components/staff/StatCard";
 import { DashboardCharts } from "@/components/staff/DashboardCharts";
 
+// 集計値をリアルタイムに反映するため、ビルド時の静的プリレンダーを禁止する
+export const dynamic = "force-dynamic";
+
 export default async function StaffDashboardPage() {
   const summary = await getDashboardSummary();
 

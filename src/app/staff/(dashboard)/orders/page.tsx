@@ -1,6 +1,9 @@
 import { getKitchenOrders, orderTotal } from "@/lib/data";
 import { OrdersBoard } from "@/components/staff/OrdersBoard";
 
+// 注文状況をリアルタイムに反映するため、ビルド時の静的プリレンダーを禁止する
+export const dynamic = "force-dynamic";
+
 export default async function StaffOrdersPage() {
   const groups = await getKitchenOrders();
   const initialTables = groups.map((g) => ({

@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { staffSignOut } from "@/app/staff/actions";
 
 const NAV_ITEMS = [
   { href: "/staff/orders", label: "注文管理" },
@@ -52,11 +51,6 @@ export function Sidebar({
 
       <div className="border-t border-border pt-4">
         <p className="truncate text-xs text-muted">{staffName}</p>
-        <form action={staffSignOut}>
-          <button type="submit" className="mt-1 text-xs text-muted underline underline-offset-4">
-            ログアウト
-          </button>
-        </form>
       </div>
     </aside>
   );
