@@ -252,7 +252,7 @@ function OrderCard({
           <button
             onClick={() => onUpdateStatus(order.id, "cancelled")}
             disabled={busyId === order.id}
-            className="rounded-full px-2.5 py-1 text-xs text-red-600 disabled:opacity-50"
+            className="rounded-full px-2.5 py-1 text-xs font-medium text-warning underline underline-offset-4 disabled:opacity-50"
           >
             取消
           </button>

@@ -34,7 +34,7 @@ export default async function ShiftMembersSettingsPage(props: PageProps<"/staff/
             <ConfirmButton
               confirmText={`「${member.name}」を削除しますか？シフト表からも削除されます。`}
               formAction={deleteShiftMemberAction}
-              className="rounded-full border border-border px-3 py-1.5 text-xs text-red-600"
+              className="rounded-full border border-border px-3 py-1.5 text-xs text-warning"
             >
               削除
             </ConfirmButton>

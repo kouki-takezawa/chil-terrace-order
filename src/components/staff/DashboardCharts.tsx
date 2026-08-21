@@ -3,8 +3,9 @@
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { formatYen } from "@/lib/format";
 
-const LUNCH_COLOR = "#d9552b";
-const DINNER_COLOR = "#2563eb";
+// クリーム色の濃淡だけで昼/夜を区別する（ブランドカラーはクリームと白の2色のみ）
+const LUNCH_COLOR = "#d8c194";
+const DINNER_COLOR = "#8a6a3b";
 
 interface HourlyDatum {
   hour: number;
@@ -43,9 +44,9 @@ export function DashboardCharts({
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={barData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e6e5e0" vertical={false} />
-                <XAxis dataKey="hour" tick={{ fontSize: 12 }} stroke="#6b6a63" />
-                <YAxis tick={{ fontSize: 12 }} stroke="#6b6a63" width={56} tickFormatter={(v) => formatYen(v)} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#e7dac0" vertical={false} />
+                <XAxis dataKey="hour" tick={{ fontSize: 12 }} stroke="#8c795c" />
+                <YAxis tick={{ fontSize: 12 }} stroke="#8c795c" width={56} tickFormatter={(v) => formatYen(v)} />
                 <Tooltip formatter={(value) => formatYen(Number(value))} />
                 <Bar dataKey="amount" radius={[6, 6, 0, 0]}>
                   {barData.map((entry, index) => (

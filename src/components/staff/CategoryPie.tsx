@@ -3,7 +3,8 @@
 import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { formatYen } from "@/lib/format";
 
-const PALETTE = ["#d9552b", "#2563eb", "#16a34a", "#a855f7", "#eab308", "#0891b2", "#dc2626", "#64748b"];
+// クリーム色の濃淡だけで系列を区別する（ブランドカラーはクリームと白の2色のみ）
+const PALETTE = ["#8a6a3b", "#d8c194", "#4a3a26", "#c9ad78", "#6b5636", "#efe2c2", "#a8875a", "#3a2c1c"];
 
 export function CategoryPie({ data }: { data: { name: string; revenue: number }[] }) {
   const pieData = data.filter((d) => d.revenue > 0).map((d, i) => ({ ...d, color: PALETTE[i % PALETTE.length] }));

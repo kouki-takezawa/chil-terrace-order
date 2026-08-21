@@ -25,7 +25,7 @@ export default async function AccountsSettingsPage(props: PageProps<"/staff/sett
                 <input type="hidden" name="id" value={account.id} />
                 <ConfirmButton
                   confirmText={`「${account.name}」（${account.email}）を削除しますか？`}
-                  className="text-xs text-red-600 underline underline-offset-4"
+                  className="text-xs text-warning underline underline-offset-4"
                 >
                   削除
                 </ConfirmButton>

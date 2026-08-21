@@ -161,7 +161,7 @@ export function ShiftDayView({ date, members, shifts: initialShifts }: { date: s
                   <div key={h} className="absolute inset-x-0 border-t border-border" style={{ top: i * HOUR_HEIGHT, opacity: 0.5 }} />
                 ))}
                 {isToday && (
-                  <div className="absolute inset-x-0 z-10 border-t-2 border-red-500" style={{ top: nowOffsetJST() }} />
+                  <div className="absolute inset-x-0 z-10 border-t-[3px] border-warning" style={{ top: nowOffsetJST() }} />
                 )}
                 {memberShifts.map((s) => (
                   <button
@@ -211,14 +211,14 @@ export function ShiftDayView({ date, members, shifts: initialShifts }: { date: s
                 placeholder="メモ（任意）"
                 className="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-sm text-foreground"
               />
-              {error && <p className="text-xs text-red-600">{error}</p>}
+              {error && <p className="rounded-lg border border-warning bg-warning-surface px-2 py-1.5 text-xs font-medium text-warning">{error}</p>}
             </div>
             <div className="mt-5 flex gap-2">
               {modal.mode === "edit" && (
                 <button
                   onClick={remove}
                   disabled={busy}
-                  className="rounded-full border border-border px-4 py-2 text-sm text-red-600 disabled:opacity-50"
+                  className="rounded-full border border-border px-4 py-2 text-sm text-warning disabled:opacity-50"
                 >
                   削除
                 </button>

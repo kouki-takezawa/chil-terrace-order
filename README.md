@@ -177,6 +177,13 @@ npm run db:seed       # DBが空の場合のみ、スタッフアカウント・
 npm run dev
 ```
 
+### メニューを紙メニューの内容に一括更新する
+
+`prisma/menu-data.ts` に現在の紙メニュー（「チルパリ 〜Terrace酒場〜 FOOD MENU」）の内容が定義されている。
+
+- **新規環境**（DBにカテゴリーが1件も無い場合）: 上記の `npm run db:seed` で自動的にこの内容が入る。
+- **すでに旧メニューが投入済みの環境**（本番など）: `npm run db:reset-menu` を実行すると、既存メニューを `prisma/menu-data.ts` の内容に一括更新する。注文履歴が無い商品は削除、注文履歴がある商品は削除できないため「販売停止」扱いにしたうえで、新メニューの内容を投入する（複数回実行しても安全）。実行前に `.env.local` の `DATABASE_URL` が対象の環境を指していることを確認すること。
+
 ## デプロイ
 
 Vercelに接続済み。`main` ブランチへのpushで自動デプロイされる。`vercel-build` スクリプトがデプロイの度に `prisma generate` → `prisma db push --accept-data-loss` → シード投入（データが無い部分のみ） → `next build` を実行する。

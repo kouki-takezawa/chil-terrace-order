@@ -36,7 +36,7 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
               </form>
               <form action={deleteCategoryAction} className="ml-auto">
                 <input type="hidden" name="id" value={category.id} />
-                <ConfirmButton confirmText={`「${category.name}」を削除しますか？`} className="text-xs text-red-600 underline underline-offset-4">
+                <ConfirmButton confirmText={`「${category.name}」を削除しますか？`} className="text-xs text-warning underline underline-offset-4">
                   カテゴリーを削除
                 </ConfirmButton>
               </form>
@@ -84,7 +84,7 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                   <ConfirmButton
                     confirmText={`「${item.name}」を削除しますか？`}
                     formAction={deleteMenuItemAction}
-                    className="rounded-full border border-border px-3 py-1.5 text-xs text-red-600"
+                    className="rounded-full border border-border px-3 py-1.5 text-xs text-warning"
                   >
                     削除
                   </ConfirmButton>
