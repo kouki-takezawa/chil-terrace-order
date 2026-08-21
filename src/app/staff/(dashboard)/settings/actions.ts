@@ -23,6 +23,7 @@ import {
   deleteShiftMember,
   type OperationMode,
 } from "@/lib/data";
+import { ALLERGEN_CODES } from "@/lib/format";
 
 async function requireAuth() {
   const session = await requireStaffSession();
@@ -52,9 +53,13 @@ export async function updateGeneralSettingsAction(formData: FormData) {
   await requireAuth();
   const restaurantName = str(formData, "restaurantName");
   const operationMode = str(formData, "operationMode") as OperationMode;
+  const wifiSsid = str(formData, "wifiSsid");
+  const wifiPassword = str(formData, "wifiPassword");
   await updateSettings({
     restaurantName: restaurantName || undefined,
     operationMode: operationMode === "number" ? "number" : "table",
+    wifiSsid: wifiSsid || null,
+    wifiPassword: wifiPassword || null,
   });
   revalidatePath("/staff", "layout");
 }
@@ -86,6 +91,10 @@ export async function deleteCategoryAction(formData: FormData) {
   revalidatePath("/staff/settings/menu");
 }
 
+function allergensFromForm(formData: FormData): string {
+  return ALLERGEN_CODES.filter((code) => formData.get(`allergen_${code}`) === "on").join(",");
+}
+
 export async function addMenuItemAction(formData: FormData) {
   await requireAuth();
   const categoryId = str(formData, "categoryId");
@@ -93,8 +102,16 @@ export async function addMenuItemAction(formData: FormData) {
   const price = Number(str(formData, "price"));
   const description = str(formData, "description");
   const isRecommended = formData.get("isRecommended") === "on";
+  const allergens = allergensFromForm(formData);
   if (!categoryId || !name || !Number.isFinite(price) || price < 0) return;
-  await createMenuItem({ categoryId, name, price, description: description || undefined, isRecommended });
+  await createMenuItem({
+    categoryId,
+    name,
+    price,
+    description: description || undefined,
+    isRecommended,
+    allergens: allergens || undefined,
+  });
   revalidatePath("/staff/settings/menu");
 }
 
@@ -106,8 +123,24 @@ export async function updateMenuItemAction(formData: FormData) {
   const description = str(formData, "description");
   const isRecommended = formData.get("isRecommended") === "on";
   const isAvailable = formData.get("isAvailable") === "on";
+  const allergens = allergensFromForm(formData);
+  const pendingPriceRaw = str(formData, "pendingPrice");
+  const applyAtRaw = str(formData, "applyAt");
   if (!id || !name || !Number.isFinite(price) || price < 0) return;
-  await updateMenuItem(id, { name, price, description: description || null, isRecommended, isAvailable });
+
+  const pendingPrice = pendingPriceRaw ? Number(pendingPriceRaw) : null;
+  const applyAt = applyAtRaw ? new Date(`${applyAtRaw}T00:00:00`) : null;
+
+  await updateMenuItem(id, {
+    name,
+    price,
+    description: description || null,
+    isRecommended,
+    isAvailable,
+    allergens: allergens || null,
+    pendingPrice: pendingPrice != null && Number.isFinite(pendingPrice) ? pendingPrice : null,
+    applyAt,
+  });
   revalidatePath("/staff/settings/menu");
 }
 

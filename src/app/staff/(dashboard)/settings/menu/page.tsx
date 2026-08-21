@@ -1,6 +1,8 @@
 import { getAllCategoriesWithItems } from "@/lib/data";
 import { ErrorBanner } from "@/components/staff/ErrorBanner";
 import { ConfirmButton } from "@/components/staff/ConfirmButton";
+import { PrintButton } from "@/components/staff/PrintButton";
+import { ALLERGEN_CODES, ALLERGEN_LABEL, formatYen } from "@/lib/format";
 import {
   addCategoryAction,
   renameCategoryAction,
@@ -10,6 +12,10 @@ import {
   deleteMenuItemAction,
 } from "../actions";
 
+function toDateInputValue(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
 export default async function MenuSettingsPage(props: PageProps<"/staff/settings/menu">) {
   const { error } = await props.searchParams;
   const categories = await getAllCategoriesWithItems();
@@ -18,6 +24,35 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
     <div>
       <ErrorBanner error={typeof error === "string" ? error : undefined} />
 
+      <div className="mb-6 flex items-center justify-between print:hidden">
+        <p className="text-sm text-muted">カテゴリー・商品の追加、価格、販売状況を管理します。</p>
+        <PrintButton className="shrink-0 rounded-full bg-accent px-5 py-2 text-sm font-bold text-accent-foreground" />
+      </div>
+
+      <div className="hidden print:block">
+        {categories.map((category) => {
+          const available = category.menuItems.filter((i) => i.isAvailable);
+          if (available.length === 0) return null;
+          return (
+            <div key={category.id} className="mb-6 break-inside-avoid">
+              <h2 className="mb-2 border-b-2 border-black pb-1 text-lg font-bold">{category.name}</h2>
+              <div className="space-y-1">
+                {available.map((item) => (
+                  <div key={item.id} className="flex justify-between text-sm">
+                    <span>
+                      {item.name}
+                      {item.description ? `（${item.description}）` : ""}
+                    </span>
+                    <span>{formatYen(item.price)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="print:hidden">
       <div className="space-y-6">
         {categories.map((category) => (
           <div key={category.id} className="rounded-2xl border border-border bg-surface p-5">
@@ -88,6 +123,37 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
                   >
                     削除
                   </ConfirmButton>
+
+                  <div className="col-span-full flex flex-wrap gap-2 border-t border-border pt-2">
+                    {ALLERGEN_CODES.map((code) => (
+                      <label key={code} className="flex items-center gap-1 text-[11px] text-muted">
+                        <input
+                          type="checkbox"
+                          name={`allergen_${code}`}
+                          defaultChecked={item.allergens?.split(",").includes(code) ?? false}
+                        />
+                        {ALLERGEN_LABEL[code]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="col-span-full flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-muted">価格改定を予約:</span>
+                    <input
+                      type="number"
+                      name="pendingPrice"
+                      min={0}
+                      placeholder="新価格"
+                      defaultValue={item.pendingPrice ?? ""}
+                      className="w-24 rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    />
+                    <input
+                      type="date"
+                      name="applyAt"
+                      defaultValue={item.applyAt ? toDateInputValue(item.applyAt) : ""}
+                      className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground"
+                    />
+                    <span className="text-[11px] text-muted">から適用（両方入力で有効）</span>
+                  </div>
                 </form>
               ))}
               {category.menuItems.length === 0 && <p className="text-xs text-muted">商品がありません</p>}
@@ -123,6 +189,14 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
               <button type="submit" className="rounded-full bg-accent px-3 py-1.5 text-xs font-bold text-accent-foreground">
                 商品を追加
               </button>
+              <div className="col-span-full flex flex-wrap gap-2">
+                {ALLERGEN_CODES.map((code) => (
+                  <label key={code} className="flex items-center gap-1 text-[11px] text-muted">
+                    <input type="checkbox" name={`allergen_${code}`} />
+                    {ALLERGEN_LABEL[code]}
+                  </label>
+                ))}
+              </div>
             </form>
           </div>
         ))}
@@ -140,6 +214,7 @@ export default async function MenuSettingsPage(props: PageProps<"/staff/settings
           カテゴリーを追加
         </button>
       </form>
+      </div>
     </div>
   );
 }

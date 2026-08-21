@@ -33,7 +33,7 @@ export default async function QrSettingsPage() {
 
   const tablesWithQr = await Promise.all(
     tables.map(async (table) => {
-      const url = `${baseUrl}/order/${table.number}`;
+      const url = `${baseUrl}/order/${table.number}?t=${table.qrToken}`;
       const qrDataUrl = await QRCode.toDataURL(url, { margin: 1, width: 240 });
       return { ...table, url, qrDataUrl };
     })

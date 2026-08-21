@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { getShiftsForRange, listShiftMembers } from "@/lib/data";
+import { getShiftsForRange, listShiftMembers, getDayNote } from "@/lib/data";
 import { ShiftDayView } from "@/components/staff/ShiftDayView";
 import { PrintButton } from "@/components/staff/PrintButton";
+import { saveDayNoteAction } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -46,7 +47,7 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
     const date = typeof dateQuery === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dateQuery) ? dateQuery : todayKeyJST();
     const dayStart = new Date(`${date}T00:00:00.000Z`);
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
-    const shifts = await getShiftsForRange(dayStart, dayEnd);
+    const [shifts, dayNote] = await Promise.all([getShiftsForRange(dayStart, dayEnd), getDayNote(date)]);
     const monthOfDate = `${date.slice(0, 4)}-${date.slice(5, 7)}`;
     const prevDate = toDateKey(new Date(dayStart.getTime() - 86400000));
     const nextDate = toDateKey(new Date(dayStart.getTime() + 86400000));
@@ -84,6 +85,25 @@ export default async function StaffShiftsPage(props: PageProps<"/staff/shifts">)
             シフトメンバーが登録されていません。設定＞シフトメンバーから追加してください。
           </p>
         )}
+
+        <form action={saveDayNoteAction} className="mb-4 rounded-xl border border-border bg-surface p-3">
+          <input type="hidden" name="date" value={date} />
+          <label className="mb-1 block text-xs font-medium text-muted">この日の申し送り</label>
+          <textarea
+            name="note"
+            defaultValue={dayNote?.note ?? ""}
+            rows={2}
+            placeholder="例: 15時から団体のご予約あり／〇〇さんは18時に一旦退勤"
+            className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm text-foreground print:hidden"
+          />
+          <p className="hidden text-sm print:block">{dayNote?.note}</p>
+          <button
+            type="submit"
+            className="mt-2 rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-accent-foreground print:hidden"
+          >
+            保存
+          </button>
+        </form>
 
         <ShiftDayView
           date={date}

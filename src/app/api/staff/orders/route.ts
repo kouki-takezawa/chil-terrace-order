@@ -18,7 +18,12 @@ export async function GET() {
   return NextResponse.json({
     mode: "table",
     tables: board.groups.map((g) => ({
-      table: g.table,
+      table: {
+        id: g.table.id,
+        number: g.table.number,
+        name: g.table.name,
+        helpRequestedAt: g.table.helpRequestedAt,
+      },
       orders: g.orders.map((order) => ({ ...order, total: orderTotal(order) })),
     })),
   });
