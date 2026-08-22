@@ -1,4 +1,4 @@
-import { getKitchenOrders, getMenu, orderTotal } from "@/lib/data";
+import { getKitchenOrders, getMenu, getSettings, orderTotal } from "@/lib/data";
 import { OrdersBoard } from "@/components/staff/OrdersBoard";
 
 // 注文状況をリアルタイムに反映するため、ビルド時の静的プリレンダーを禁止する
@@ -17,7 +17,14 @@ function serializeOrder(order: Parameters<typeof orderTotal>[0]) {
 }
 
 export default async function StaffOrdersPage() {
-  const board = await getKitchenOrders();
+  // 卓方式のときだけ後段でメニューを使うが、モードが分かるまで待ってから
+  // メニューを取得すると直列（2往復）になってしまうため、先にsettingsだけ
+  // 取得してモードを確定させ、注文とメニューの取得を並列で走らせる。
+  const settings = await getSettings();
+  const [board, categories] = await Promise.all([
+    getKitchenOrders(),
+    settings.operationMode === "table" ? getMenu() : Promise.resolve([]),
+  ]);
 
   const initialData =
     board.mode === "number"
@@ -34,9 +41,6 @@ export default async function StaffOrdersPage() {
             orders: g.orders.map(serializeOrder),
           })),
         };
-
-  // 卓方式のときだけ、フロアビューから口頭注文を代理入力できるようメニューを渡す
-  const categories = board.mode === "table" ? await getMenu() : [];
 
   return (
     <div>
