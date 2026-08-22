@@ -5,18 +5,9 @@ import { NumberOrderClient } from "@/components/order/NumberOrderClient";
 export const dynamic = "force-dynamic";
 
 export default async function NumberOrderPage() {
-  const settings = await getSettings();
-
-  if (settings.operationMode !== "number") {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-2 bg-background px-6 text-center">
-        <p className="text-lg font-bold text-foreground">この店舗は卓ごとのQRからご注文ください</p>
-        <p className="text-sm text-muted">お席のQRコードを読み取ってアクセスしてください。</p>
-      </div>
-    );
-  }
-
-  const categories = await getMenu();
+  // 卓方式の店舗でも、共通QR（卓が決まっていない客用）からの注文を受け付ける
+  // ため、運用形態（operationMode）に関わらずこのページ自体は常に開放する。
+  const [settings, categories] = await Promise.all([getSettings(), getMenu()]);
 
   return (
     <NumberOrderClient

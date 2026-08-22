@@ -26,5 +26,6 @@ export async function GET() {
       },
       orders: g.orders.map((order) => ({ ...order, total: orderTotal(order) })),
     })),
+    freeOrders: board.freeOrders.map((order) => ({ ...order, total: orderTotal(order) })),
   });
 }
