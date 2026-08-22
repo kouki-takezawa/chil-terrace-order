@@ -276,8 +276,8 @@ export function NumberOrderClient({
   return (
     <div className="min-h-screen bg-background pb-28">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 pt-4 pb-3 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
             <p className="text-xs text-muted">{restaurantName}</p>
             <h1 className="text-lg font-bold text-foreground">ご注文</h1>
           </div>

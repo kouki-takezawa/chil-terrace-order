@@ -277,28 +277,26 @@ export function OrderClient({
   return (
     <div className="min-h-screen bg-background pb-28">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 pt-4 pb-3 backdrop-blur">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted">{restaurantName}</p>
-            <h1 className="text-lg font-bold text-foreground">{tableName}</h1>
-          </div>
-          <div className="flex items-center gap-2">
+        <div className="min-w-0">
+          <p className="text-xs text-muted">{restaurantName}</p>
+          <h1 className="truncate text-lg font-bold text-foreground">{tableName}</h1>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            onClick={callStaffNow}
+            disabled={callingStaff}
+            className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
+          >
+            {callingStaff ? "連絡中…" : "スタッフを呼ぶ"}
+          </button>
+          {orders.length > 0 && (
             <button
-              onClick={callStaffNow}
-              disabled={callingStaff}
-              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground disabled:opacity-50"
+              onClick={() => setShowStatus(true)}
+              className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
             >
-              {callingStaff ? "連絡中…" : "スタッフを呼ぶ"}
+              注文履歴・合計 {formatYen(orderedTotal)}
             </button>
-            {orders.length > 0 && (
-              <button
-                onClick={() => setShowStatus(true)}
-                className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground"
-              >
-                注文履歴・合計 {formatYen(orderedTotal)}
-              </button>
-            )}
-          </div>
+          )}
         </div>
         {wifiSsid && (
           <button onClick={() => setShowWifi((v) => !v)} className="mt-2 text-xs text-muted underline underline-offset-4">
