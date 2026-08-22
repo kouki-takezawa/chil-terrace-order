@@ -158,6 +158,11 @@ model Order {
 
   @@index([status, createdAt])
   @@index([mode, dailyNumber])
+  // 客側のポーリング（getTableOrderStatus）・会計・会計取消がすべて
+  // sessionId で絞り込むため、注文が増えるほど効いてくる想定で追加。
+  @@index([sessionId])
+  // フロアビュー（卓の状況）が tableId で絞り込むため追加。
+  @@index([tableId])
 }
 
 model OrderItem {
@@ -171,6 +176,10 @@ model OrderItem {
   name       String
   price      Int
   quantity   Int
+
+  // ほぼ全ての注文取得（include: { items: true }）がこのFKで絞り込むため、
+  // 注文履歴が増えるほど効いてくる最重要インデックス。
+  @@index([orderId])
 }
 
 // シフト表に登場するメンバー（ログインアカウントとは別。勤務予定を組むためだけの

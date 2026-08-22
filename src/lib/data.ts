@@ -10,8 +10,16 @@ export type OperationMode = "table" | "number";
 
 type OrderWithItems = Order & { items: OrderItem[] };
 
+// 合計金額の計算だけが目的の集計クエリ（ダッシュボード・分析・フロア状況など）
+// では、表示用のname/idまで持つ全カラムのOrderItemを取得する必要はない。
+// price/quantityだけをselectして転送量を減らした結果にも使えるよう、
+// orderTotalの実体をこちらに分離しておく。
+function itemsTotal(items: { price: number; quantity: number }[]): number {
+  return items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+}
+
 export function orderTotal(order: OrderWithItems): number {
-  return order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  return itemsTotal(order.items);
 }
 
 // ---- 設定 -------------------------------------------------------------
@@ -159,18 +167,7 @@ export async function getTableByNumber(number: number) {
   return prisma.restaurantTable.findUnique({ where: { number } });
 }
 
-// qrTokenは既存卓へ安全に一括バックフィルできないためスキーマ上は任意
-// （詳細はschema.prismaのコメント参照）。読み込みのたびに、まだトークンが
-// 無い卓（デプロイ直後の既存卓など）を見つけて自己修復的に発行する。
-async function ensureTableTokens() {
-  const missing = await prisma.restaurantTable.findMany({ where: { qrToken: null }, select: { id: true } });
-  for (const table of missing) {
-    await prisma.restaurantTable.update({ where: { id: table.id }, data: { qrToken: crypto.randomUUID() } });
-  }
-}
-
 export async function getTables() {
-  await ensureTableTokens();
   return prisma.restaurantTable.findMany({ orderBy: { number: "asc" } });
 }
 
@@ -391,7 +388,10 @@ export async function getKitchenOrders(): Promise<KitchenBoard> {
   const orders = await prisma.order.findMany({
     where: { mode: "table", status: { in: [...ACTIVE_STATUSES] } },
     orderBy: { createdAt: "asc" },
-    include: { items: true, table: true },
+    include: {
+      items: true,
+      table: { select: { id: true, number: true, name: true, helpRequestedAt: true } },
+    },
   });
 
   const byTable = new Map<
@@ -497,50 +497,92 @@ export async function setTableStaffNote(tableNumber: number, note: string) {
 
 export type FloorTableStatus = "empty" | "active" | "just_closed";
 
+// 卓ごとにセッション・注文を1件ずつ問い合わせる素朴な実装（N+1）は、卓数が
+// 増えるほどポーリング（8秒ごと）のたびのDB往復が線形に増えて重くなっていた。
+// ここでは全卓分をまとめて3クエリで取得し、JS側でtableIdごとに振り分ける。
 export async function getFloorStatus() {
   const tables = await getTables();
+  if (tables.length === 0) return [];
+  const tableIds = tables.map((t) => t.id);
   const now = Date.now();
+  const justClosedSince = new Date(now - UNDO_CHECKOUT_WINDOW_MS);
 
-  return Promise.all(
-    tables.map(async (table) => {
-      const [latestSession, latestOrder] = await Promise.all([
-        prisma.tableSession.findFirst({ where: { tableId: table.id }, orderBy: { startedAt: "desc" } }),
-        prisma.order.findFirst({
-          where: { tableId: table.id, status: { in: [...ACTIVE_STATUSES] } },
-          orderBy: { createdAt: "desc" },
-        }),
-      ]);
+  const [openSessions, recentClosedSessions, activeOrders] = await Promise.all([
+    // openTableIdのユニーク制約により、1卓につき進行中のセッションは高々1件。
+    prisma.tableSession.findMany({
+      where: { tableId: { in: tableIds }, closedAt: null },
+      select: { id: true, tableId: true, staffNote: true },
+    }),
+    // 会計取消の猶予時間内に閉じたセッションだけを対象にする（それより古い
+    // 履歴は「卓の状況」に不要なため取得しない）。
+    prisma.tableSession.findMany({
+      where: { tableId: { in: tableIds }, closedAt: { gte: justClosedSince } },
+      select: { tableId: true, closedAt: true },
+    }),
+    prisma.order.findMany({
+      where: { tableId: { in: tableIds }, status: { in: [...ACTIVE_STATUSES] } },
+      select: {
+        tableId: true,
+        sessionId: true,
+        createdAt: true,
+        items: { select: { price: true, quantity: true } },
+      },
+    }),
+  ]);
 
-      let status: FloorTableStatus = "empty";
-      let canUndoCheckout = false;
-      let subtotal = 0;
+  const openSessionByTable = new Map(openSessions.map((s) => [s.tableId, s]));
 
-      if (latestSession && latestSession.closedAt === null) {
-        status = "active";
-        const orders = await prisma.order.findMany({
-          where: { sessionId: latestSession.id, status: { in: [...ACTIVE_STATUSES] } },
-          include: { items: true },
-        });
-        subtotal = orders.reduce((s, o) => s + orderTotal(o), 0);
-      } else if (latestSession && latestSession.closedAt) {
-        const elapsed = now - latestSession.closedAt.getTime();
-        if (elapsed <= UNDO_CHECKOUT_WINDOW_MS) {
-          status = "just_closed";
-          canUndoCheckout = true;
-        }
+  const lastClosedByTable = new Map<string, Date>();
+  for (const s of recentClosedSessions) {
+    if (!s.closedAt) continue;
+    const current = lastClosedByTable.get(s.tableId);
+    if (!current || s.closedAt > current) lastClosedByTable.set(s.tableId, s.closedAt);
+  }
+
+  const ordersByTable = new Map<string, typeof activeOrders>();
+  for (const order of activeOrders) {
+    if (!order.tableId) continue;
+    const list = ordersByTable.get(order.tableId);
+    if (list) list.push(order);
+    else ordersByTable.set(order.tableId, [order]);
+  }
+
+  return tables.map((table) => {
+    const openSession = openSessionByTable.get(table.id);
+    const tableOrders = ordersByTable.get(table.id) ?? [];
+
+    let status: FloorTableStatus = "empty";
+    let canUndoCheckout = false;
+    let subtotal = 0;
+
+    if (openSession) {
+      status = "active";
+      subtotal = tableOrders
+        .filter((o) => o.sessionId === openSession.id)
+        .reduce((s, o) => s + itemsTotal(o.items), 0);
+    } else {
+      const closedAt = lastClosedByTable.get(table.id);
+      if (closedAt) {
+        status = "just_closed";
+        canUndoCheckout = true;
       }
+    }
 
-      return {
-        table: { id: table.id, number: table.number, name: table.name },
-        status,
-        subtotal,
-        staffNote: latestSession?.staffNote ?? null,
-        helpRequestedAt: table.helpRequestedAt,
-        lastOrderAt: latestOrder?.createdAt ?? null,
-        canUndoCheckout,
-      };
-    })
-  );
+    const lastOrderAt = tableOrders.reduce<Date | null>(
+      (max, o) => (!max || o.createdAt > max ? o.createdAt : max),
+      null
+    );
+
+    return {
+      table: { id: table.id, number: table.number, name: table.name },
+      status,
+      subtotal,
+      staffNote: openSession?.staffNote ?? null,
+      helpRequestedAt: table.helpRequestedAt,
+      lastOrderAt,
+      canUndoCheckout,
+    };
+  });
 }
 
 export async function getTodaySessionsForTable(tableNumber: number) {
@@ -550,13 +592,15 @@ export async function getTodaySessionsForTable(tableNumber: number) {
   const sessions = await prisma.tableSession.findMany({
     where: { tableId: table.id, startedAt: { gte: start, lt: end } },
     orderBy: { startedAt: "desc" },
-    include: { orders: { include: { items: true } } },
+    include: {
+      orders: { select: { status: true, items: { select: { price: true, quantity: true } } } },
+    },
   });
   return sessions.map((s) => ({
     id: s.id,
     startedAt: s.startedAt,
     closedAt: s.closedAt,
-    total: s.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + orderTotal(o), 0),
+    total: s.orders.filter((o) => o.status !== "cancelled").reduce((sum, o) => sum + itemsTotal(o.items), 0),
   }));
 }
 
@@ -569,7 +613,8 @@ export async function getDashboardSummary() {
   const [orders, closedSessions] = await Promise.all([
     prisma.order.findMany({
       where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
-      include: { items: true },
+      // 金額の集計だけに使うため、表示用の名前などを持つ全カラムのitemsは不要。
+      select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
     }),
     settings.operationMode === "table"
       ? prisma.tableSession.count({ where: { closedAt: { gte: start, lt: end } } })
@@ -587,7 +632,7 @@ export async function getDashboardSummary() {
   const hourly = new Map<number, { lunch: number; dinner: number }>();
 
   for (const order of orders) {
-    const total = orderTotal(order);
+    const total = itemsTotal(order.items);
     if (order.status === "cancelled") {
       cancelledCount++;
       continue;
@@ -724,7 +769,9 @@ export async function getOrderAnalytics(period: AnalyticsPeriod) {
   const [items, orderCount] = await Promise.all([
     prisma.orderItem.findMany({
       where: { order: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } } },
-      include: { menuItem: { include: { category: true } } },
+      // カテゴリー名以外のmenuItemの全カラム（価格・説明・写真URLなど）は
+      // 集計に使わないため取得しない。
+      include: { menuItem: { select: { category: { select: { name: true } } } } },
     }),
     prisma.order.count({
       where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } },
@@ -776,7 +823,8 @@ export async function getPeriodAnalysis(period: ReportPeriod) {
 
   const orders = await prisma.order.findMany({
     where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
-    include: { items: true },
+    // 日別集計にはstatus/createdAtと金額計算用のitemsだけあればよい。
+    select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
   });
 
   const confirmedStatus: OrderStatus = settings.operationMode === "table" ? "paid" : "served";
@@ -793,7 +841,7 @@ export async function getPeriodAnalysis(period: ReportPeriod) {
     if (order.status === "cancelled") {
       bucket.cancelledCount++;
     } else {
-      const total = orderTotal(order);
+      const total = itemsTotal(order.items);
       bucket.orderCount++;
       if (order.status === confirmedStatus) bucket.confirmed += total;
       else bucket.pending += total;
@@ -841,7 +889,7 @@ export async function deleteShiftMember(id: string) {
 export async function getShiftsForRange(start: Date, end: Date) {
   return prisma.shift.findMany({
     where: { date: { gte: start, lt: end } },
-    include: { member: true },
+    include: { member: { select: { name: true } } },
     orderBy: [{ date: "asc" }, { startTime: "asc" }],
   });
 }
@@ -882,10 +930,13 @@ export async function upsertDayNote(dateKey: string, note: string) {
 
 export async function getReservationsForDate(dateKey: string) {
   const date = new Date(`${dateKey}T00:00:00.000Z`);
+  // table名はCSV/Excelエクスポート（export/reservations）でのみ使われるが、
+  // RestaurantTableは店舗全体でも数件〜数十件程度と小さいテーブルなので、
+  // 呼び出し元ごとにクエリを出し分けるより、常にjoinしてしまう方が単純で安い。
   return prisma.reservation.findMany({
     where: { date },
     orderBy: { time: "asc" },
-    include: { table: true },
+    include: { table: { select: { number: true, name: true } } },
   });
 }
 
