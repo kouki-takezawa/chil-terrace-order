@@ -254,8 +254,6 @@ export async function createOrder(input: {
     return { menuItemId, name: menuItem.name, price: menuItem.price, quantity };
   });
 
-  const settings = await getSettings();
-
   async function createWithIdempotency(data: Parameters<typeof prisma.order.create>[0]["data"]) {
     try {
       return await prisma.order.create({ data, include: { items: true } });
@@ -273,7 +271,10 @@ export async function createOrder(input: {
     }
   }
 
-  if (settings.operationMode === "number") {
+  // 卓方式・番号方式（フリー席の共通QR）は排他ではなく併用できる。店舗の
+  // 運用設定（operationMode）ではなく、リクエストに卓番号があるかどうかで
+  // その注文自体の扱いを決める。
+  if (input.tableNumber == null) {
     const dailyNumber = await nextDailyOrderNumber();
     return createWithIdempotency({
       mode: "number",
@@ -284,7 +285,6 @@ export async function createOrder(input: {
     });
   }
 
-  if (input.tableNumber == null) throw new Error("卓番号が必要です");
   const table = await getTableByNumber(input.tableNumber);
   if (!table) throw new Error("卓が見つかりません");
   if (input.tableToken !== table.qrToken) {
@@ -370,6 +370,9 @@ export type KitchenBoard =
         table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null };
         orders: OrderWithItems[];
       }[];
+      // 卓方式の店舗でも、共通QR（卓が決まっていない客用）からの注文は
+      // どの卓にも属さないため別枠で返す。
+      freeOrders: OrderWithItems[];
     }
   | { mode: "number"; orders: OrderWithItems[] };
 
@@ -386,7 +389,14 @@ export async function getKitchenOrders(): Promise<KitchenBoard> {
   }
 
   const orders = await prisma.order.findMany({
-    where: { mode: "table", status: { in: [...ACTIVE_STATUSES] } },
+    where: {
+      OR: [
+        { mode: "table", status: { in: [...ACTIVE_STATUSES] } },
+        // 共通QRからの注文は番号方式と同じく、受渡（served）まで進んだら
+        // 一覧から外れる（卓のように会計待ちで残り続ける概念が無いため）。
+        { mode: "number", status: { in: ["pending", "preparing"] } },
+      ],
+    },
     orderBy: { createdAt: "asc" },
     include: {
       items: true,
@@ -398,13 +408,21 @@ export async function getKitchenOrders(): Promise<KitchenBoard> {
     number,
     { table: { id: string; number: number; name: string | null; helpRequestedAt: Date | null }; orders: typeof orders }
   >();
+  const freeOrders: typeof orders = [];
   for (const order of orders) {
-    if (!order.table) continue;
-    const key = order.table.number;
-    if (!byTable.has(key)) byTable.set(key, { table: order.table, orders: [] });
-    byTable.get(key)!.orders.push(order);
+    if (order.mode === "table" && order.table) {
+      const key = order.table.number;
+      if (!byTable.has(key)) byTable.set(key, { table: order.table, orders: [] });
+      byTable.get(key)!.orders.push(order);
+    } else {
+      freeOrders.push(order);
+    }
   }
-  return { mode: "table", groups: Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number) };
+  return {
+    mode: "table",
+    groups: Array.from(byTable.values()).sort((a, b) => a.table.number - b.table.number),
+    freeOrders: freeOrders.sort((a, b) => (a.dailyNumber ?? 0) - (b.dailyNumber ?? 0)),
+  };
 }
 
 export async function updateOrderStatus(orderId: string, status: OrderStatus, cancelReason?: string) {
@@ -610,18 +628,19 @@ export async function getDashboardSummary() {
   const settings = await getSettings();
   const { start, end } = getTodayRangeJST();
 
+  // 卓方式・番号方式（共通QR）は併用され得るため、店舗の主運用形態に
+  // 関わらず本日の全注文を対象にする。確定/未確定の境目（会計 or 受渡）は
+  // その注文自体のmodeで判定する。
   const [orders, closedSessions] = await Promise.all([
     prisma.order.findMany({
-      where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
+      where: { createdAt: { gte: start, lt: end } },
       // 金額の集計だけに使うため、表示用の名前などを持つ全カラムのitemsは不要。
-      select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
+      select: { mode: true, status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
     }),
     settings.operationMode === "table"
       ? prisma.tableSession.count({ where: { closedAt: { gte: start, lt: end } } })
       : Promise.resolve(undefined),
   ]);
-
-  const confirmedStatus: OrderStatus = settings.operationMode === "table" ? "paid" : "served";
 
   let confirmedAmount = 0;
   let pendingAmount = 0;
@@ -638,9 +657,10 @@ export async function getDashboardSummary() {
       continue;
     }
     orderCount++;
+    const confirmedStatus: OrderStatus = order.mode === "table" ? "paid" : "served";
     if (order.status === confirmedStatus) {
       confirmedAmount += total;
-      if (settings.operationMode === "number") servedCount++;
+      if (order.mode === "number") servedCount++;
     } else {
       pendingAmount += total;
     }
@@ -762,19 +782,19 @@ function getRangeForAnalyticsPeriod(period: AnalyticsPeriod): { start: Date; end
   return { start: new Date(todayStart.getTime() - (days - 1) * 24 * 60 * 60 * 1000), end: todayEnd };
 }
 
+// 卓方式・番号方式（共通QR）は併用され得るため、両方の注文を対象にする。
 export async function getOrderAnalytics(period: AnalyticsPeriod) {
-  const settings = await getSettings();
   const { start, end } = getRangeForAnalyticsPeriod(period);
 
   const [items, orderCount] = await Promise.all([
     prisma.orderItem.findMany({
-      where: { order: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } } },
+      where: { order: { createdAt: { gte: start, lt: end }, status: { not: "cancelled" } } },
       // カテゴリー名以外のmenuItemの全カラム（価格・説明・写真URLなど）は
       // 集計に使わないため取得しない。
       include: { menuItem: { select: { category: { select: { name: true } } } } },
     }),
     prisma.order.count({
-      where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode, status: { not: "cancelled" } },
+      where: { createdAt: { gte: start, lt: end }, status: { not: "cancelled" } },
     }),
   ]);
 
@@ -816,18 +836,16 @@ export async function getOrderAnalytics(period: AnalyticsPeriod) {
 export type ReportPeriod = "7d" | "30d" | "90d";
 
 export async function getPeriodAnalysis(period: ReportPeriod) {
-  const settings = await getSettings();
   const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
   const { end } = getTodayRangeJST();
   const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
 
+  // 卓方式・番号方式（共通QR）は併用され得るため、両方の注文を対象にする。
   const orders = await prisma.order.findMany({
-    where: { createdAt: { gte: start, lt: end }, mode: settings.operationMode },
-    // 日別集計にはstatus/createdAtと金額計算用のitemsだけあればよい。
-    select: { status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
+    where: { createdAt: { gte: start, lt: end } },
+    // 日別集計にはmode/status/createdAtと金額計算用のitemsだけあればよい。
+    select: { mode: true, status: true, createdAt: true, items: { select: { price: true, quantity: true } } },
   });
-
-  const confirmedStatus: OrderStatus = settings.operationMode === "table" ? "paid" : "served";
 
   const dailyMap = new Map<string, { confirmed: number; pending: number; orderCount: number; cancelledCount: number }>();
   for (let i = 0; i < days; i++) {
@@ -843,6 +861,7 @@ export async function getPeriodAnalysis(period: ReportPeriod) {
     } else {
       const total = itemsTotal(order.items);
       bucket.orderCount++;
+      const confirmedStatus: OrderStatus = order.mode === "table" ? "paid" : "served";
       if (order.status === confirmedStatus) bucket.confirmed += total;
       else bucket.pending += total;
     }

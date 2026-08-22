@@ -40,6 +40,7 @@ export default async function StaffOrdersPage() {
             },
             orders: g.orders.map(serializeOrder),
           })),
+          freeOrders: board.freeOrders.map(serializeOrder),
         };
 
   return (

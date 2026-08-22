@@ -31,13 +31,17 @@ export default async function QrSettingsPage() {
     );
   }
 
-  const tablesWithQr = await Promise.all(
-    tables.map(async (table) => {
-      const url = `${baseUrl}/order/${table.number}?t=${table.qrToken}`;
-      const qrDataUrl = await QRCode.toDataURL(url, { margin: 1, width: 240 });
-      return { ...table, url, qrDataUrl };
-    })
-  );
+  const freeOrderUrl = `${baseUrl}/order`;
+  const [tablesWithQr, freeQrDataUrl] = await Promise.all([
+    Promise.all(
+      tables.map(async (table) => {
+        const url = `${baseUrl}/order/${table.number}?t=${table.qrToken}`;
+        const qrDataUrl = await QRCode.toDataURL(url, { margin: 1, width: 240 });
+        return { ...table, url, qrDataUrl };
+      })
+    ),
+    QRCode.toDataURL(freeOrderUrl, { margin: 1, width: 240 }),
+  ]);
 
   return (
     <div>
@@ -59,6 +63,18 @@ export default async function QrSettingsPage() {
           </div>
         ))}
         {tablesWithQr.length === 0 && <p className="text-sm text-muted">テーブルが登録されていません</p>}
+      </div>
+
+      <div className="mt-8 border-t border-border pt-6 print:break-before-page">
+        <p className="mb-1 text-sm font-bold text-foreground">共通QR（卓が決まっていない客用）</p>
+        <p className="mb-4 text-xs text-muted print:hidden">
+          カウンター席・順番待ちなど特定の卓に紐付かない注文を受け付けます。レジなど共通の場所に掲示してください。
+        </p>
+        <div className="flex max-w-xs flex-col items-center rounded-2xl border border-border bg-surface p-4 print:border-2 print:border-black print:p-6">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={freeQrDataUrl} alt="共通QRコード" className="h-32 w-32 print:h-56 print:w-56" />
+          <p className="mt-2 break-all text-center text-[10px] text-muted print:hidden">{freeOrderUrl}</p>
+        </div>
       </div>
     </div>
   );

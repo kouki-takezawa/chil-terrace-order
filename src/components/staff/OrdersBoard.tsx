@@ -34,7 +34,9 @@ interface MenuCategoryDTO {
   menuItems: { id: string; name: string; price: number }[];
 }
 
-type BoardData = { mode: "table"; tables: TableGroupDTO[] } | { mode: "number"; orders: OrderDTO[] };
+type BoardData =
+  | { mode: "table"; tables: TableGroupDTO[]; freeOrders: OrderDTO[] }
+  | { mode: "number"; orders: OrderDTO[] };
 
 const STATUS_STEPS: { value: string; tableLabel: string; numberLabel: string }[] = [
   { value: "pending", tableLabel: "受付", numberLabel: "受付" },
@@ -91,6 +93,7 @@ export function OrdersBoard({
           ...g,
           orders: g.orders.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)),
         })),
+        freeOrders: prev.freeOrders.map((o) => (o.id === updated.id ? { ...o, ...updated } : o)),
       };
     });
   }
@@ -262,7 +265,7 @@ function ActiveOrdersView({
   setCheckoutTarget,
   resolveHelp,
 }: {
-  data: { mode: "table"; tables: TableGroupDTO[] };
+  data: { mode: "table"; tables: TableGroupDTO[]; freeOrders: OrderDTO[] };
   busyId: string | null;
   updateStatus: (orderId: string, status: string, cancelReason?: string) => void;
   setCheckoutTarget: (group: TableGroupDTO) => void;
@@ -277,7 +280,7 @@ function ActiveOrdersView({
     setNow(Date.now());
   }, [data]);
 
-  if (data.tables.length === 0) {
+  if (data.tables.length === 0 && data.freeOrders.length === 0) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-10 text-center text-sm text-muted">
         現在、進行中の注文はありません
@@ -286,57 +289,72 @@ function ActiveOrdersView({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {data.tables.map((group) => {
-        const { table, orders } = group;
-        const tableTotal = orders.reduce((s, o) => s + o.total, 0);
-        const latestOrderAt = orders.reduce((max, o) => Math.max(max, new Date(o.createdAt).getTime()), 0);
-        const isIdle = latestOrderAt > 0 && now - latestOrderAt > IDLE_THRESHOLD_MS;
-        return (
-          <div
-            key={table.id}
-            className={`rounded-2xl border bg-surface p-4 ${isIdle ? "border-warning" : "border-border"}`}
-          >
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="text-base font-bold text-foreground">{table.name ?? `卓${table.number}`}</h2>
-              <button
-                onClick={() => setCheckoutTarget(group)}
-                disabled={busyId === `checkout-${table.number}`}
-                className="shrink-0 rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-accent-foreground disabled:opacity-50"
-              >
-                会計
-              </button>
-            </div>
-
-            {table.helpRequestedAt && (
-              <div className="mb-3 flex items-center justify-between rounded-lg border border-warning bg-warning-surface px-3 py-1.5 text-xs font-medium text-warning">
-                <span>スタッフ呼び出し中</span>
-                <button
-                  onClick={() => resolveHelp(table.number)}
-                  disabled={busyId === `help-${table.number}`}
-                  className="underline underline-offset-4 disabled:opacity-50"
-                >
-                  対応済みにする
-                </button>
-              </div>
-            )}
-            {isIdle && (
-              <p className="mb-3 text-xs font-medium text-warning">30分以上ご注文がありません</p>
-            )}
-
-            <div className="space-y-3">
-              {orders.map((order) => (
-                <OrderCard key={order.id} order={order} busyId={busyId} onUpdateStatus={updateStatus} mode="table" />
-              ))}
-            </div>
-
-            <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm">
-              <span className="text-muted">小計</span>
-              <span className="font-bold text-foreground">{formatYen(tableTotal)}</span>
-            </div>
+    <div>
+      {data.freeOrders.length > 0 && (
+        <div className="mb-6">
+          <h2 className="mb-2 text-sm font-bold text-foreground">共通QRからの注文（卓なし）</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {data.freeOrders.map((order) => (
+              <OrderCard key={order.id} order={order} busyId={busyId} onUpdateStatus={updateStatus} mode="number" showNumber />
+            ))}
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {data.tables.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {data.tables.map((group) => {
+            const { table, orders } = group;
+            const tableTotal = orders.reduce((s, o) => s + o.total, 0);
+            const latestOrderAt = orders.reduce((max, o) => Math.max(max, new Date(o.createdAt).getTime()), 0);
+            const isIdle = latestOrderAt > 0 && now - latestOrderAt > IDLE_THRESHOLD_MS;
+            return (
+              <div
+                key={table.id}
+                className={`rounded-2xl border bg-surface p-4 ${isIdle ? "border-warning" : "border-border"}`}
+              >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="text-base font-bold text-foreground">{table.name ?? `卓${table.number}`}</h2>
+                  <button
+                    onClick={() => setCheckoutTarget(group)}
+                    disabled={busyId === `checkout-${table.number}`}
+                    className="shrink-0 rounded-full bg-accent px-4 py-1.5 text-xs font-bold text-accent-foreground disabled:opacity-50"
+                  >
+                    会計
+                  </button>
+                </div>
+
+                {table.helpRequestedAt && (
+                  <div className="mb-3 flex items-center justify-between rounded-lg border border-warning bg-warning-surface px-3 py-1.5 text-xs font-medium text-warning">
+                    <span>スタッフ呼び出し中</span>
+                    <button
+                      onClick={() => resolveHelp(table.number)}
+                      disabled={busyId === `help-${table.number}`}
+                      className="underline underline-offset-4 disabled:opacity-50"
+                    >
+                      対応済みにする
+                    </button>
+                  </div>
+                )}
+                {isIdle && (
+                  <p className="mb-3 text-xs font-medium text-warning">30分以上ご注文がありません</p>
+                )}
+
+                <div className="space-y-3">
+                  {orders.map((order) => (
+                    <OrderCard key={order.id} order={order} busyId={busyId} onUpdateStatus={updateStatus} mode="table" />
+                  ))}
+                </div>
+
+                <div className="mt-3 flex justify-between border-t border-border pt-3 text-sm">
+                  <span className="text-muted">小計</span>
+                  <span className="font-bold text-foreground">{formatYen(tableTotal)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
