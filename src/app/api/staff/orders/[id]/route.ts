@@ -5,7 +5,7 @@ import { updateOrderStatus, type OrderStatus } from "@/lib/data";
 const VALID_STATUSES: OrderStatus[] = ["pending", "preparing", "served", "paid", "cancelled"];
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await requireStaffSession();
+  const session = await requireStaffSession(request);
   if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 
   const { id } = await context.params;
