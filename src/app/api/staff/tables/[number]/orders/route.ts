@@ -3,7 +3,7 @@ import { requireStaffSession } from "@/lib/apiAuth";
 import { createStaffOrder } from "@/lib/data";
 
 export async function POST(request: Request, context: { params: Promise<{ number: string }> }) {
-  const session = await requireStaffSession();
+  const session = await requireStaffSession(request);
   if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 
   const { number } = await context.params;
