@@ -5,7 +5,7 @@ import { updateShift, removeShift } from "@/lib/data";
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await requireStaffSession();
+  const session = await requireStaffSession(request);
   if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 
   const { id } = await context.params;
@@ -28,8 +28,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await requireStaffSession();
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const session = await requireStaffSession(request);
   if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 
   const { id } = await context.params;

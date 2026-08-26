@@ -5,7 +5,7 @@ import { createReservation } from "@/lib/data";
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function POST(request: Request) {
-  const session = await requireStaffSession();
+  const session = await requireStaffSession(request);
   if (!session) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
