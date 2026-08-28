@@ -1,5 +1,7 @@
 # Chil Terrace Order
 
+🔗 **本番URL**: [https://chil-terrace-order.vercel.app](https://chil-terrace-order.vercel.app)
+
 QRコードから注文できる、飲食店向けの注文・厨房管理システム。Next.js (App Router) + Prisma Postgres + NextAuth (Auth.js) で構築。
 
 このREADMEは、実装済みの仕様をひととおり日本語でまとめたものです。コードの正としての役割は各ファイルのコメントが担い、ここでは「何ができるか」の全体像を把握できるようにしています。
